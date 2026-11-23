@@ -1,0 +1,11 @@
+{
+  "name": "classbridge-demomidterm-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "powershell -ExecutionPolicy Bypass -File \"./start-all.ps1\"",
+    "start": "powershell -ExecutionPolicy Bypass -File \"./start-all.ps1\"",
+    "build": "npm --prefix frontend run build"
+  }
+}
+

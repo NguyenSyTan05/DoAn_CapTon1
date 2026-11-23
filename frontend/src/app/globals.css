@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Định nghĩa tiện ích ẩn thanh cuộn */
+@utility no-scrollbar {
+  /* Chrome, Safari, Opera */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  /* Firefox */
+  scrollbar-width: none;
+  /* IE và Edge */
+  -ms-overflow-style: none;
+}

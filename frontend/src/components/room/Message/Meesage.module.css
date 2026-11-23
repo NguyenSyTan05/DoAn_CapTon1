@@ -1,0 +1,60 @@
+@reference "../../../app/globals.css";
+.sidebar {
+  @apply w-80 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shrink-0 h-full select-none;
+}
+
+.sideHeader {
+  @apply flex border-b border-slate-800 bg-slate-950/40;
+}
+
+.sideHeader button {
+  @apply flex-1 py-3 text-xs font-semibold flex items-center justify-center gap-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 transition-colors border-b-2 border-transparent;
+}
+
+.active {
+  @apply !text-blue-400 !border-b-2 !border-blue-500 !bg-slate-800/60;
+}
+
+.icon {
+  @apply w-4 h-4 text-current;
+}
+
+.messageArea {
+  @apply flex-1 overflow-y-auto p-4 flex flex-col gap-3 no-scrollbar;
+}
+
+.message {
+  @apply bg-slate-800/70 border border-slate-700/70 rounded-lg px-3 py-2.5 text-sm text-slate-200;
+}
+
+.messageMeta {
+  @apply flex items-center justify-between gap-2 mb-1 text-[11px] text-slate-400;
+}
+
+.messageMeta span {
+  @apply font-semibold text-blue-300 truncate;
+}
+
+.message p {
+  @apply break-words;
+}
+
+.emptyState {
+  @apply m-auto text-center text-sm text-slate-500;
+}
+
+.inputArea {
+  @apply p-3 bg-slate-900 border-t border-slate-800 relative flex items-center;
+}
+
+.inputField {
+  @apply w-full bg-slate-950 border border-slate-700/80 text-sm text-slate-200 rounded-full pl-4 pr-11 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder:text-slate-500 transition-all;
+}
+
+.sendBtn {
+  @apply absolute right-4 p-1.5 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors flex items-center justify-center;
+}
+
+.sendBtn:disabled {
+  @apply cursor-not-allowed bg-slate-700 text-slate-400;
+}

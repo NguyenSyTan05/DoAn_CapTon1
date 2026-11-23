@@ -1,0 +1,68 @@
+@reference "../../../app/globals.css";
+.container {
+  @apply flex-[3] flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative min-h-0 select-none shadow-sm;
+}
+
+.headerBadge {
+  @apply absolute top-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2 z-10 text-xs shadow-md;
+}
+
+.badgeTag {
+  @apply font-bold text-emerald-400 tracking-wider flex items-center gap-1.5 uppercase text-[11px];
+}
+
+.badgeDivider {
+  @apply text-slate-600;
+}
+
+.badgeSharer {
+  @apply text-slate-300 font-medium;
+}
+
+.contentArea {
+  @apply flex-1 flex flex-col items-center justify-center bg-slate-950/80 p-6 relative overflow-y-auto;
+}
+
+.emptyBox {
+  @apply w-full max-w-xl aspect-video bg-slate-900/60 border-2 border-dashed border-slate-800 rounded-2xl flex flex-col items-center justify-center p-6 text-center transition-all hover:border-slate-700;
+}
+
+.iconWrapper {
+  @apply p-4 bg-slate-800/80 rounded-2xl mb-4 border border-slate-700/50 shadow-inner text-slate-400;
+}
+
+.emptyTitle {
+  @apply text-slate-200 font-semibold text-base mb-1.5;
+}
+
+.emptyDesc {
+  @apply text-slate-500 text-xs max-w-sm mb-6 leading-relaxed;
+}
+
+.shareBtn {
+  @apply flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-semibold rounded-xl shadow-lg shadow-blue-600/20 transition-all cursor-pointer;
+}
+
+.viewerWrapper {
+  @apply w-full h-full flex flex-col items-center gap-3;
+}
+
+.pdfPage {
+  @apply flex-1 min-h-0 overflow-auto rounded-lg shadow-lg;
+}
+
+.loadingText {
+  @apply text-slate-400 text-sm p-6;
+}
+
+.navBar {
+  @apply flex items-center gap-4 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2 shrink-0;
+}
+
+.navBtn {
+  @apply flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-800 text-slate-200 text-xs font-semibold rounded-lg transition-colors;
+}
+
+.pageIndicator {
+  @apply text-slate-300 text-xs font-medium min-w-[90px] text-center;
+}

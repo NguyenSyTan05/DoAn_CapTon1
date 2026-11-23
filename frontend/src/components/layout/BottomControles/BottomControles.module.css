@@ -1,0 +1,61 @@
+@reference "../../../app/globals.css";
+.container {
+  @apply h-20 bg-slate-950 border-t border-slate-800 flex items-center justify-between px-6 shrink-0 select-none;
+}
+
+.leftBtn {
+  @apply flex items-center gap-2.5;
+}
+
+.onMutedAllBtn,
+.onCamOffAllBtn {
+  @apply hidden sm:flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-medium text-slate-300 transition-all cursor-pointer;
+}
+
+.middleBtn {
+  @apply flex items-center gap-2.5;
+}
+
+.Particiants {
+  @apply flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-medium text-slate-300 transition-all cursor-pointer;
+}
+
+.inviteBtn {
+  @apply flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-all cursor-pointer;
+}
+
+.rightBtn {
+  @apply flex items-center gap-3;
+}
+
+.onToggleMicBtn,
+.onToggleCamBtn {
+  @apply flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-semibold transition-all shadow-md cursor-pointer;
+}
+
+.micOnBtn {
+  @apply bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20;
+}
+
+.micOffBtn {
+  @apply bg-slate-900 border border-slate-700 hover:bg-slate-800 text-red-400;
+}
+
+.isCamOnBtn {
+  @apply bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white;
+}
+
+.isCamOffBtn {
+  @apply bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-400;
+}
+
+.onEndCallBtn {
+  @apply px-5 py-2.5 rounded-full bg-red-600 hover:bg-red-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-red-950 transition-all cursor-pointer;
+}
+.micOffLucide,
+.cameraOffLucide,
+.userPlusLucide,
+.micLucide,
+.phoneOffLucide {
+  @apply w-4 h-4;
+}

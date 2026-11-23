@@ -1,0 +1,13 @@
+{
+  "venvPath": "d:/TailieuNPKH/classbridge/backend/ai-service",
+  "venv": ".venv",
+  "extraPaths": [
+    "backend",
+    "ai-service",
+    "d:/TailieuNPKH/classbridge/backend/ai-service/.venv/Lib/site-packages"
+  ],
+  "pythonVersion": "3.11",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}
+

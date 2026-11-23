@@ -1,0 +1,9 @@
+@reference "../globals.css";
+
+.container {
+  @apply h-screen w-full bg-[#0b1120] text-slate-200 font-sans overflow-hidden flex flex-col select-none;
+}
+
+.mainContent {
+  @apply flex-1 flex overflow-hidden p-3 md:p-4 gap-3 md:gap-4 min-h-0;
+}
