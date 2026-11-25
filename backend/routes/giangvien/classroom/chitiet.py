@@ -4,10 +4,11 @@ from pathlib import PurePath
 from uuid import UUID
 
 from flask import Blueprint, current_app, jsonify, request, send_file
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from auth_utils import LECTURER_REQUIRED_MESSAGE, LECTURER_ROLE, role_denied, role_required
 from extensions import db
 
 ALLOWED_LECTURE_EXTENSIONS = {
@@ -68,9 +69,6 @@ SESSION_DETAILS_SQL = text(
 
 
 def _lecturer_id():
-    if get_jwt().get("role") != "giang_vien":
-        return None
-
     email = get_jwt_identity()
     if not isinstance(email, str):
         return None
@@ -198,7 +196,7 @@ def _serialize_lecture_material(row):
 
 
 @lecturer_session_detail_bp.route("/<session_id>", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def get_lecturer_session(session_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:
@@ -220,7 +218,7 @@ def get_lecturer_session(session_id):
 
 
 @lecturer_session_detail_bp.route("/<session_id>/materials", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def get_lecturer_session_materials(session_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:
@@ -249,7 +247,7 @@ def get_lecturer_session_materials(session_id):
 @lecturer_session_detail_bp.route(
     "/<session_id>/materials", methods=["POST"]
 )
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def upload_lecturer_session_material(session_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:
@@ -328,7 +326,7 @@ def upload_lecturer_session_material(session_id):
 @lecturer_session_detail_bp.route(
     "/<file_id>/materials/preview", methods=["GET"]
 )
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def preview_lecturer_session_material(file_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:
@@ -454,10 +452,14 @@ def start_lecturer_session(session_id):
     delivery_mode = payload.get("deliveryMode")
     if not isinstance(delivery_mode, str):
         return jsonify({"message": "Vui lòng chọn học online hoặc học offline."}), 400
+    # Giữ thứ tự cũ: kiểm tra dữ liệu gửi lên trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
+    if denied:
+        return denied
     return _change_session_status(session_id, "LIVE", delivery_mode.upper())
 
 
 @lecturer_session_detail_bp.route("/<session_id>/end", methods=["POST"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def end_lecturer_session(session_id):
     return _change_session_status(session_id, "ENDED")

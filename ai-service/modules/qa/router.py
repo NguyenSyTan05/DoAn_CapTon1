@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 
+from core.auth import ANY_MEMBER, LECTURER_ONLY, STUDENT_OR_LECTURER, require_room_access
 from core.session_scope import normalize_session, session_param
 
 from modules.qa.answer_store import AnswerRecord, AnswerStore
@@ -45,7 +46,11 @@ router = APIRouter()
 # để câu hỏi từ MỌI thiết bị đều tới được /aggregate — không còn phụ thuộc
 # localStorage riêng của từng trình duyệt.
 
-@router.post("/api/v1/questions", response_model=QuestionInput)
+@router.post(
+    "/api/v1/questions",
+    response_model=QuestionInput,
+    dependencies=[Depends(require_room_access(STUDENT_OR_LECTURER))],
+)
 async def submit_question(
     payload: QuestionInput, request: Request, session: str = Depends(session_param)
 ):
@@ -64,7 +69,11 @@ async def submit_question(
     return payload
 
 
-@router.get("/api/v1/questions", response_model=QuestionListResponse)
+@router.get(
+    "/api/v1/questions",
+    response_model=QuestionListResponse,
+    dependencies=[Depends(require_room_access(ANY_MEMBER))],
+)
 async def list_questions(request: Request, session: str = Depends(session_param)):
     """Toàn bộ câu hỏi đã lưu — Dashboard/phòng live gọi cái này thay vì
     đọc localStorage, rồi POST kết quả sang /aggregate."""
@@ -74,7 +83,10 @@ async def list_questions(request: Request, session: str = Depends(session_param)
     )
 
 
-@router.delete("/api/v1/questions/{question_id}")
+@router.delete(
+    "/api/v1/questions/{question_id}",
+    dependencies=[Depends(require_room_access(LECTURER_ONLY))],
+)
 async def remove_question(
     question_id: str, request: Request, session: str = Depends(session_param)
 ):
@@ -95,7 +107,11 @@ async def remove_question(
 # PostgreSQL-backed implementation later without touching these endpoints
 # or the frontend.
 
-@router.post("/api/v1/answers", response_model=AnswerOutput)
+@router.post(
+    "/api/v1/answers",
+    response_model=AnswerOutput,
+    dependencies=[Depends(require_room_access(LECTURER_ONLY))],
+)
 async def submit_answer(
     payload: AnswerRequest, request: Request, session: str = Depends(session_param)
 ):
@@ -119,7 +135,10 @@ async def submit_answer(
     return output
 
 
-@router.delete("/api/v1/answers/{representative_id}")
+@router.delete(
+    "/api/v1/answers/{representative_id}",
+    dependencies=[Depends(require_room_access(LECTURER_ONLY))],
+)
 async def remove_answer(
     representative_id: str, request: Request, session: str = Depends(session_param)
 ):
@@ -136,7 +155,11 @@ async def remove_answer(
     return {"status": "deleted"}
 
 
-@router.get("/api/v1/answers", response_model=AnswerListResponse)
+@router.get(
+    "/api/v1/answers",
+    response_model=AnswerListResponse,
+    dependencies=[Depends(require_room_access(ANY_MEMBER))],
+)
 async def list_answers(request: Request, session: str = Depends(session_param)):
     """Trạng thái hiện tại — dùng cho Dashboard Giảng viên (fetch sau mỗi
     hành động) và làm fallback nếu client không dùng được WebSocket."""

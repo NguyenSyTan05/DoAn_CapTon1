@@ -421,7 +421,7 @@ export default function AdminAccountsPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [toast, setToast] = useState<string | null>(null);
-  const [importingFile, setImportingFile] = useState(false);
+  const [, setImportingFile] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -886,7 +886,7 @@ export default function AdminAccountsPage() {
     const pages: number[] = [];
     const maxShow = 5;
     let start = Math.max(1, page - Math.floor(maxShow / 2));
-    let end = Math.min(totalPages, start + maxShow - 1);
+    const end = Math.min(totalPages, start + maxShow - 1);
     start = Math.max(1, end - maxShow + 1);
     for (let i = start; i <= end; i++) pages.push(i);
     return pages;
@@ -1337,7 +1337,6 @@ export default function AdminAccountsPage() {
               <div className={styles.detailHeader}>
                 <div className={styles.detailAvatar}>
                   {detailUser.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={detailUser.avatarUrl} alt="" />
                   ) : (
                     (detailUser.fullName || detailUser.username || "?")

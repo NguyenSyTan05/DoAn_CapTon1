@@ -3,6 +3,11 @@ fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 pydantic>=2.7,<3.0
 
+# 1b. Xác thực (kiểm JWT Flask + hỏi Flask quyền vào phòng) — core/auth.py
+# httpx2 là bản kế nhiệm httpx (cùng API), starlette.testclient cũng dùng nó.
+PyJWT>=2.8,<3.0
+httpx2>=2.13,<3.0
+
 # 2. Audio Processing & Speech-to-Text (Whisper)
 faster-whisper>=1.1,<2.0
 numpy>=1.26,<3.0

@@ -280,7 +280,7 @@ export default function DashboardPage() {
                   return (
                     <div key={group.id} className={styles.groupItem}>
                       <div className={styles.groupMeta}>
-                        <span className={styles.groupTitle}>"{group.title}"</span>
+                        <span className={styles.groupTitle}>&quot;{group.title}&quot;</span>
                         <div className={styles.groupTags}>
                           <span className={styles.langTag}>{group.lang}</span>
                           {group.status === "answered" ? (
@@ -467,7 +467,7 @@ export default function DashboardPage() {
                     </div>
                     <span className={styles.feedbackTime}>{fb.time}</span>
                   </div>
-                  <p className={styles.commentText}>"{fb.comment}"</p>
+                  <p className={styles.commentText}>&quot;{fb.comment}&quot;</p>
                   <div className={styles.ratingStars}>
                     {"★".repeat(fb.rating)}
                     {"☆".repeat(5 - fb.rating)}

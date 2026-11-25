@@ -56,7 +56,29 @@
 
 .sidebarHeaderToggle:hover {
   color: #1d4ed8;
-  background: #eff6ff;
+}
+
+.sidebarBrandButton,
+.sidebarCollapseToggle {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sidebarBrandButton {
+  flex: 1;
+  text-align: left;
+}
+
+.sidebarCollapseToggle {
+  flex: 0 0 auto;
+  justify-content: center;
 }
 
 .sidebarBrand {

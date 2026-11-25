@@ -1,7 +1,8 @@
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import text
 
+from auth_utils import ADMIN_REQUIRED_MESSAGE, ADMIN_ROLE, role_required
 from extensions import db
 
 
@@ -11,11 +12,8 @@ admin_dashboard_bp = Blueprint(
 
 
 @admin_dashboard_bp.route("/dashboard", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def get_admin_dashboard():
-    if get_jwt().get("role") != "admin":
-        return jsonify({"message": "Administrator access is required."}), 403
-
     period = request.args.get("period", "day")
     if period not in ("day", "week"):
         return jsonify({"message": "Period must be day or week."}), 400

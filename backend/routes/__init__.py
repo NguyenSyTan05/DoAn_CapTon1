@@ -20,6 +20,7 @@ from routes.login import login_bp
 from routes.register_account_student import register_account_bp
 from routes.student_classes import student_classes_bp, student_sessions_bp
 from routes.send_verification import send_verification_bp
+from routes.session_access import session_access_bp
 from routes.verify_verification import verify_verification_bp
 
 route_blueprints = (
@@ -38,6 +39,7 @@ route_blueprints = (
     lecturer_classes_bp,
     login_bp,
     send_verification_bp,
+    session_access_bp,
     verify_verification_bp,
     register_account_bp,
     student_classes_bp,

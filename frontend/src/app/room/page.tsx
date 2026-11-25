@@ -12,7 +12,7 @@ import QAToast from '../../components/room/QAToast/QAToast';
 import Transcript from '../../components/room/Transcript/Transcript';
 import UserParticipant from '../../components/room/UserParticipant/UserParticipant';
 import BottomControles from '../../components/layout/BottomControles/BottomControles';
-import { aiUrl, aiWsUrl, currentSession } from '../../lib/ai';
+import { aiFetch, aiWsUrl, currentSession } from '../../lib/ai';
 
 // react-pdf dùng window/document nên chỉ được tải ở trình duyệt (không render phía server)
 const SlideViewer = dynamic(() => import('../../components/room/SlideViewer/SlideViewer'), { ssr: false });
@@ -90,12 +90,23 @@ export default function AIClassroomPage() {
 
   // ---- Phụ đề song ngữ -------------------------------------------------
   const addLine = (setter: React.Dispatch<React.SetStateAction<TranScript[]>>, id: string, text: string, timestamp: string) =>
-    setter((prev) => (prev.some((l) => l.id === id) ? prev : [...prev, { id, speaker: "Giảng viên", text, timestamp }]));
+    setter((prev) =>
+      prev.some((l) => l.id === id)
+        ? prev.map((l) => (l.id === id ? { ...l, text, timestamp } : l))
+        : [...prev, { id, speaker: "Giảng viên", text, timestamp }]
+    );
   const setLineText = (setter: React.Dispatch<React.SetStateAction<TranScript[]>>, id: string, text: string) =>
     setter((prev) => prev.map((l) => (l.id === id ? { ...l, text } : l)));
 
-  const handleServerMessage = (data: FinalMsg | TranslationMsg | ResultMsg | HistoryMsg) => {
+  const handleServerMessage = (data: FinalMsg | TranslationMsg | ResultMsg | HistoryMsg | { type: 'clear' }) => {
+    if (data.type === 'clear') {
+      setVnTrans([]);
+      setEnTrans([]);
+      return;
+    }
     if (data.type === 'history') {
+      setVnTrans([]);
+      setEnTrans([]);
       data.items.forEach(handleServerMessage);
       return;
     }
@@ -193,14 +204,13 @@ export default function AIClassroomPage() {
     let stream: MediaStream | null = null;
     let ctx: AudioContext | null = null;
     try {
-      // Tắt noiseSuppression & echoCancellation của trình duyệt vì thuật toán lọc ồn WebRTC
-      // hay cắt mất dải tần 4–8 kHz của phụ âm đầu tiếng Việt (Ch/Tr/Kh/S/Th -> T/H),
-      // trong khi phòng học không phát loa đàm thoại 2 chiều và backend đã có lọc thông cao + Silero VAD.
+      // Bật đầy đủ WebRTC echoCancellation + noiseSuppression + autoGainControl
+      // để khử tiếng xì xào nền trong phòng họp và giữ giọng nói chính xác.
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
+          echoCancellation: true,
+          noiseSuppression: true,
           autoGainControl: true,
           sampleRate: { ideal: 16000 },
         },
@@ -288,7 +298,7 @@ export default function AIClassroomPage() {
     localStorage.setItem("room_questions", JSON.stringify(updatedQuestions));
 
     // Gửi câu hỏi lên kho chung phía server, gắn đúng phiên học (?session=)
-    fetch(aiUrl("/api/v1/questions"), {
+    aiFetch("/api/v1/questions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(newQuestion),

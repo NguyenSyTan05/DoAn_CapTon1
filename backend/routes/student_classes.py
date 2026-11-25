@@ -9,10 +9,11 @@ TODO (sau này): chế độ "chờ giảng viên duyệt" và tham gia bằng Q
 from uuid import UUID
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from auth_utils import STUDENT_ROLES, role_denied, role_required
 from extensions import db
 from request_limits import request_limit_exceeded
 
@@ -25,14 +26,11 @@ student_sessions_bp = Blueprint(
     "student_sessions", __name__, url_prefix="/auth/student/sessions"
 )
 
-STUDENT_ROLES = {"sinh_vien", "student"}
 MAX_CODE_LENGTH = 30  # classes.class_code là VARCHAR(30)
 
 
 def _current_student():
     """Trả về sinh viên đang đăng nhập (đang hoạt động) hoặc None."""
-    if get_jwt().get("role") not in STUDENT_ROLES:
-        return None
     email = get_jwt_identity()
     if not isinstance(email, str):
         return None
@@ -127,6 +125,10 @@ def join_class_by_code():
     if len(code) > MAX_CODE_LENGTH:
         return jsonify({"message": "Mã lớp không hợp lệ."}), 400
 
+    # Giữ thứ tự cũ: kiểm tra dữ liệu đầu vào trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(*STUDENT_ROLES, message="Chỉ sinh viên mới có thể tham gia lớp.")
+    if denied:
+        return denied
     try:
         student = _current_student()
         if not student:
@@ -215,7 +217,7 @@ def join_class_by_code():
 
 
 @student_classes_bp.route("", methods=["GET"])
-@jwt_required()
+@role_required(*STUDENT_ROLES, message="Chỉ sinh viên mới xem được danh sách này.")
 def list_my_classes():
     try:
         student = _current_student()
@@ -351,6 +353,20 @@ def _member_session(session_id, student_id):
     ).mappings().first()
 
 
+# Phiên đã kết thúc/bị huỷ: không vào (lại) được. Cùng mã với /auth/sessions/<id>/access.
+CLOSED_SESSION_STATUSES = frozenset({"ENDED", "CANCELLED"})
+
+
+def _closed_session_response(row):
+    """403 session_closed nếu phiên đã đóng, ngược lại None."""
+    if str(row["status"] or "").upper() not in CLOSED_SESSION_STATUSES:
+        return None
+    return jsonify({
+        "message": "Phiên học đã kết thúc hoặc bị huỷ.",
+        "code": "session_closed",
+    }), 403
+
+
 def _session_payload(row):
     return {
         "id": row["id"],
@@ -373,6 +389,10 @@ def get_session(session_id):
     normalized = _parse_session_id(session_id)
     if not normalized:
         return jsonify({"message": "Mã phiên học không hợp lệ."}), 400
+    # Giữ thứ tự cũ: kiểm tra dữ liệu đầu vào trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(*STUDENT_ROLES, message="Chỉ sinh viên mới xem được phiên học.")
+    if denied:
+        return denied
     try:
         student = _current_student()
         if not student:
@@ -381,6 +401,9 @@ def get_session(session_id):
         # Cùng một thông báo cho "không tồn tại" và "chưa tham gia lớp"
         if not row:
             return jsonify({"message": "Không tìm thấy phiên học hoặc bạn chưa tham gia lớp này."}), 404
+        closed = _closed_session_response(row)
+        if closed:
+            return closed
         return jsonify({"session": _session_payload(row)})
     except SQLAlchemyError:
         db.session.rollback()
@@ -395,6 +418,10 @@ def join_session(session_id):
     normalized = _parse_session_id(session_id)
     if not normalized:
         return jsonify({"message": "Mã phiên học không hợp lệ."}), 400
+    # Giữ thứ tự cũ: kiểm tra dữ liệu đầu vào trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(*STUDENT_ROLES, message="Chỉ sinh viên mới vào được phiên học.")
+    if denied:
+        return denied
     try:
         student = _current_student()
         if not student:
@@ -402,8 +429,11 @@ def join_session(session_id):
         row = _member_session(normalized, student["id"])
         if not row:
             return jsonify({"message": "Không tìm thấy phiên học hoặc bạn chưa tham gia lớp này."}), 404
+        closed = _closed_session_response(row)
+        if closed:
+            return closed
         if str(row["status"]).upper() != "LIVE":
-            return jsonify({"message": "Buổi học chưa diễn ra hoặc đã kết thúc.", "session": _session_payload(row)}), 409
+            return jsonify({"message": "Buổi học chưa diễn ra.", "session": _session_payload(row)}), 409
 
         db.session.execute(
             text(
@@ -434,6 +464,10 @@ def leave_session(session_id):
     normalized = _parse_session_id(session_id)
     if not normalized:
         return jsonify({"message": "Mã phiên học không hợp lệ."}), 400
+    # Giữ thứ tự cũ: kiểm tra dữ liệu đầu vào trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(*STUDENT_ROLES, message="Chỉ sinh viên mới rời được phiên học.")
+    if denied:
+        return denied
     try:
         student = _current_student()
         if not student:

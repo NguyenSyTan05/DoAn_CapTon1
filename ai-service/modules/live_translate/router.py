@@ -28,19 +28,30 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
+import wave
+from pathlib import Path
 from typing import Any
 
 import numpy
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from core.ai import ai_service
-from core.session_scope import normalize_session
-from modules.live_translate.audio_utils import decode_pcm16, decode_pcm32, xuly_am_thanh
+from core.auth import ANY_MEMBER, require_room_access
+from core.session_scope import normalize_session, session_param
+from modules.live_translate.audio_utils import (
+    TARGET_SAMPLE_RATE,
+    decode_pcm16,
+    decode_pcm32,
+    preprocess_audio_for_stt,
+    xuly_am_thanh,
+)
 from modules.live_translate.rooms import RoomRegistry
 from modules.live_translate.segmenter import UtteranceSegmenter
 from modules.live_translate.speech_engine import SpeechEngine
 from modules.live_translate.text_filters import (
+    apply_vi_tone_correction,
     decide_language,
     finalize_text,
     is_decoder_loop,
@@ -55,6 +66,52 @@ router = APIRouter()
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_QUEUE = 8  # đủ chứa các mệnh đề liên tiếp của giảng viên mà không rớt câu
 LANGS = {"auto", "vi", "en"}
+_RECORDINGS_DIR = Path(__file__).resolve().parents[2] / "transcripts" / "recordings"
+
+
+def _safe_session_name(session: str | None) -> str:
+    return re.sub(r"[^a-zA-Z0-9_\-]", "_", session or "default")[:80] or "default"
+
+
+def _save_utterance_wav(session: str, segment_id: int, audio: numpy.ndarray) -> str | None:
+    """Lưu file WAV 16kHz mono của từng câu nói và nối vào file ghi âm toàn buổi học."""
+    try:
+        safe = _safe_session_name(session)
+        sess_dir = _RECORDINGS_DIR / safe
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        seg_path = sess_dir / f"seg_{segment_id:04d}.wav"
+        full_path = _RECORDINGS_DIR / f"{safe}_full_lecture.wav"
+
+        # Lưu bản đã khuếch đại nhẹ để nghe lại và đối chiếu Google STT rõ ràng
+        norm_audio = preprocess_audio_for_stt(audio)
+        pcm16 = numpy.clip(norm_audio * 32767.0, -32768, 32767).astype(numpy.int16).tobytes()
+
+        with wave.open(str(seg_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(TARGET_SAMPLE_RATE)
+            wf.writeframes(pcm16)
+
+        # Nối thêm vào file ghi âm tổng của cả buổi học
+        if not full_path.is_file():
+            with wave.open(str(full_path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(TARGET_SAMPLE_RATE)
+                wf.writeframes(pcm16)
+        else:
+            with wave.open(str(full_path), "rb") as rf:
+                old_frames = rf.readframes(rf.getnframes())
+            with wave.open(str(full_path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(TARGET_SAMPLE_RATE)
+                wf.writeframes(old_frames + pcm16)
+
+        return str(seg_path)
+    except Exception:
+        logger.debug("Không lưu được WAV cho phiên '%s'", session, exc_info=True)
+        return None
 
 
 def decode_frame(data: bytes, fmt: str) -> numpy.ndarray:
@@ -80,6 +137,10 @@ async def _process_utterance(
     rooms: RoomRegistry = app_state.live_rooms
     started = time.perf_counter()
 
+    # Luôn lưu file WAV ghi âm thực tế của từng phân đoạn lớp học trước khi lọc
+    raw_seg_idx = rooms.room(scope).seq + 1
+    wav_path = await asyncio.to_thread(_save_utterance_wav, scope, raw_seg_idx, audio)
+
     forced_lang = None if language == "auto" else language
     result = await asyncio.to_thread(engine.transcribe, audio, forced_lang)
     if result is None:
@@ -96,6 +157,11 @@ async def _process_utterance(
         detected_lang=result.language,
     ):
         return
+
+    # Sửa lỗi dấu thanh điệu tiếng Việt (underthesea nếu đã cài, không ảnh hưởng tiếng Anh)
+    det_lang_hint = forced_lang or result.language
+    if det_lang_hint == "vi" or (det_lang_hint is None and result.language_prob < 0.7):
+        text = apply_vi_tone_correction(text)
 
     source = decide_language(text, result.language, result.language_prob)
     target = "vi" if source == "en" else "en"
@@ -129,7 +195,7 @@ async def _process_utterance(
                 {"type": "result", "segment_id": segment_id, "original_text": text,
                  "translated_text": translated, "source_lang": source, "target_lang": target,
                  "stt_sec": stt_seconds, "duration_sec": round(time.perf_counter() - started, 3),
-                 "timestamp": stamp},
+                 "audio_file": wav_path, "timestamp": stamp},
             )
 
     task = asyncio.create_task(translate())
@@ -137,18 +203,15 @@ async def _process_utterance(
     task.add_done_callback(translations.discard)
 
 
-@router.get("/api/v1/transcripts")
+@router.get("/api/v1/transcripts", dependencies=[Depends(require_room_access(ANY_MEMBER))])
 async def get_session_transcripts(
-    websocket_or_req_session: str | None = Query(None, alias="session"),
+    session: str = Depends(session_param),
 ) -> dict[str, Any]:
     """Lấy toàn bộ bản ghi lời giảng & bản dịch đã lưu của phiên học."""
     from pathlib import Path
     import re
 
-    scope = normalize_session(websocket_or_req_session)
-    if scope is None:
-        return {"session": "", "items": []}
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", scope or "default")[:80] or "default"
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", session or "default")[:80] or "default"
     jsonl_path = Path(__file__).resolve().parents[2] / "transcripts" / f"{safe_name}.jsonl"
     items: list[dict[str, Any]] = []
     if jsonl_path.is_file():
@@ -160,7 +223,7 @@ async def get_session_transcripts(
                         items.append(json.loads(line))
                     except ValueError:
                         continue
-    return {"session": scope, "count": len(items), "items": items}
+    return {"session": session, "count": len(items), "items": items}
 
 
 @router.websocket("/api/v1/ws/live-translate")
@@ -233,6 +296,8 @@ async def live_translate(
                     new_lang = str(data.get("language", "auto")).lower()
                     language = new_lang if new_lang in LANGS else "auto"
                     await websocket.send_json({"type": "language_changed", "language": language})
+                elif action == "clear_history" and is_lecturer:
+                    await rooms.clear_room(scope)
                 elif action == "end" and is_lecturer:
                     tail = segmenter.flush()
                     if tail is not None:

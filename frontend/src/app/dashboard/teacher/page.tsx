@@ -1,6 +1,6 @@
 "use client";
 
-import { aiUrl } from "../../../lib/ai";
+import { aiFetch } from "../../../lib/ai";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./dashboard_teacher.module.css";
@@ -290,12 +290,8 @@ interface SlideEngagementItem {
   question_count: number;
 }
 
-// [CUSTOM] backend chạy trên cùng máy chủ, khác port — dùng hostname hiện
-// tại thay vì hardcode "localhost" để dashboard mở từ thiết bị khác trong
-// mạng LAN vẫn gọi đúng backend (nhất quán với student/page.tsx).
-// [PHẦN 1] api() tự gắn ?session=<id> của phiên đang mở (mở dashboard từ /room hoặc
-// /dashboard/teacher?session=<id>) để câu hỏi/câu trả lời/slide tách theo phiên.
-const api = (path: string) => aiUrl(path);
+// [PHẦN 1] aiFetch() (lib/ai.ts) tự gắn ?session=<id> của phiên đang mở (mở dashboard từ /room hoặc
+// /dashboard/teacher?session=<id>) để câu hỏi/câu trả lời/slide tách theo phiên, kèm JWT.
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -354,7 +350,7 @@ export default function TeacherDashboard() {
 
   const fetchAnswers = useCallback(async () => {
     try {
-      const res = await fetch(api(`/api/v1/answers`));
+      const res = await aiFetch(`/api/v1/answers`);
       if (!res.ok) return;
       const data = await res.json();
       const map: Record<string, AnswerOutput> = {};
@@ -375,7 +371,7 @@ export default function TeacherDashboard() {
 
   const fetchSlideEngagement = useCallback(async () => {
     try {
-      const res = await fetch(api(`/api/v1/slides/engagement`));
+      const res = await aiFetch(`/api/v1/slides/engagement`);
       if (!res.ok) return;
       const data = await res.json();
       setSlideEngagement(data.slides ?? []);
@@ -399,7 +395,7 @@ export default function TeacherDashboard() {
 
     setTranslatingId(id);
     try {
-      const res = await fetch(api(`/api/v1/translate`), {
+      const res = await aiFetch(`/api/v1/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: cluster.representative_text }),
@@ -422,7 +418,7 @@ export default function TeacherDashboard() {
     if (!text) return;
 
     try {
-      await fetch(api(`/api/v1/answers`), {
+      await aiFetch(`/api/v1/answers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -441,7 +437,7 @@ export default function TeacherDashboard() {
 
   const removeAnswer = async (representativeId: string) => {
     try {
-      await fetch(api(`/api/v1/answers/${representativeId}`), {
+      await aiFetch(`/api/v1/answers/${representativeId}`, {
         method: "DELETE",
       });
       await fetchAnswers();
@@ -466,7 +462,7 @@ export default function TeacherDashboard() {
     let questionsPayload: QuestionInput[] = [];
 
     try {
-      const questionsRes = await fetch(api(`/api/v1/questions`));
+      const questionsRes = await aiFetch(`/api/v1/questions`);
       if (questionsRes.ok) {
         const questionsData = await questionsRes.json();
         questionsPayload = questionsData.questions ?? [];
@@ -484,7 +480,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      const response = await fetch(api(`/api/v1/questions/aggregate`),
+      const response = await aiFetch(`/api/v1/questions/aggregate`,
         {
           method: "POST",
           headers: {
@@ -590,7 +586,7 @@ export default function TeacherDashboard() {
       // trên), khiến topic vừa "xoá" lại hồi sinh ngay sau khi refresh.
       await Promise.all(
         Array.from(idsToRemove).map((id) =>
-          fetch(api(`/api/v1/questions/${id}`), { method: "DELETE" }),
+          aiFetch(`/api/v1/questions/${id}`, { method: "DELETE" }),
         ),
       );
 

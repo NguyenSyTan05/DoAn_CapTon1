@@ -35,9 +35,10 @@ class UtteranceSegmenter:
     def __init__(
         self,
         max_utterance_s: float = 7.5,
-        pre_roll_frames: int = 5,
-        min_samples: int = 4_000,  # bỏ đoạn < 0.25 s
+        pre_roll_frames: int = 4,
+        min_samples: int = 3_200,  # giữ cả câu/từ ngắn >= 0.20 s
     ) -> None:
+        self.max_utterance_s = max_utterance_s   # expose for tests & logging
         self.max_samples = int(SAMPLE_RATE * max_utterance_s)
         self.pre_roll_frames = pre_roll_frames
         self.min_samples = min_samples
@@ -47,7 +48,7 @@ class UtteranceSegmenter:
         self._energies: list[float] = []
         self._speech = 0
         self._silence = 0
-        self._noise_floor = 0.006
+        self._noise_floor = 0.004
         self._hp_zi = (
             np.zeros((_SEG_HP_SOS.shape[0], 2), dtype=np.float64)
             if _SEG_HP_SOS is not None
@@ -108,9 +109,10 @@ class UtteranceSegmenter:
         rms = self._frame_rms(frame)
 
         # Trạng thái nghỉ: theo dõi ồn nền, giữ 400 ms pre-roll để không mất phụ âm đầu câu
+        # [TUNED] ngưỡng khởi đầu hạ 15% (1.80→1.65, 0.012→0.010) để bắt giọng nhỏ / xa mic
         if not self._frames:
             self._noise_floor = min(0.025, max(0.004, 0.94 * self._noise_floor + 0.06 * rms))
-            if rms < max(0.012, self._noise_floor * 1.90):
+            if rms < max(0.010, self._noise_floor * 1.65):
                 self._pre_roll.append((frame, rms))
                 if len(self._pre_roll) > self.pre_roll_frames:
                     self._pre_roll.pop(0)
@@ -121,10 +123,11 @@ class UtteranceSegmenter:
             self._speech, self._silence = 1, 0
             return None
 
-        # Đang gom câu: dùng ngưỡng duy trì thấp hơn (hysteresis) để không cắt đứt từ nói nhỏ giữa câu
+        # Đang gom câu: dùng ngưỡng duy trì để không gom tạp âm xì xào nền trong phòng
+        # [TUNED] ngưỡng duy trì hạ nhẹ (1.28→1.15, 0.0075→0.006) để bắt giọng nhỏ hơn
         self._frames.append(frame)
         self._energies.append(rms)
-        sustain_th = max(0.006, self._noise_floor * 1.25)
+        sustain_th = max(0.006, self._noise_floor * 1.15)
         if rms >= sustain_th:
             self._speech += 1
             self._silence = 0
@@ -132,13 +135,13 @@ class UtteranceSegmenter:
             self._silence += 1
 
         total = len(self._frames) * FRAME_SAMPLES
-        if self._speech >= 3 and self._silence >= 5:        # nói >= 300 ms rồi nghỉ 500 ms -> giữ trọn cả câu
+        if self._speech >= 3 and self._silence >= 4:        # nói >= 300 ms rồi nghỉ 400 ms -> ngắt câu trọn vẹn
             return self._emit_all()
-        if self._speech >= 2 and self._silence >= 6:        # từ ngắn ("dạ", "vâng", "ok") + nghỉ 600 ms
+        if self._speech >= 2 and self._silence >= 5:        # từ ngắn ("dạ", "vâng", "ok") + nghỉ 500 ms
             return self._emit_all()
-        if self._silence >= 7:                              # xung click 100 ms rồi lặng 700 ms -> bỏ
-            return self._drop()
-        if total >= self.max_samples:                       # nói liên tục >= 7.5 s -> cắt tại khe lặng
+        if self._silence >= 6:                              # lặng 600 ms: nếu đã có >= 2 khung nói thì vẫn xuất
+            return self._emit_all() if self._speech >= 2 else self._drop()
+        if total >= self.max_samples:                       # nói liên tục >= 6.0 s -> cắt tại khe năng lượng thấp nhất
             return self._split_at_dip()
         return None
 

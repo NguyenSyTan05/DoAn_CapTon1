@@ -2,10 +2,11 @@ import secrets
 from datetime import date, datetime, time, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from auth_utils import LECTURER_REQUIRED_MESSAGE, LECTURER_ROLE, role_required
 from extensions import db
 
 
@@ -67,9 +68,6 @@ CLASSROOM_SESSIONS_SQL = text(
 
 
 def _lecturer_id():
-    if get_jwt().get("role") != "giang_vien":
-        return None
-
     email = get_jwt_identity()
     if not isinstance(email, str):
         return None
@@ -237,7 +235,7 @@ def _materialize_existing_recurring_sessions(lecturer_id):
 
 
 @lecturer_classroom_bp.route("/classroom-sessions", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def list_classroom_sessions():
     lecturer_id = _lecturer_id()
     if not lecturer_id:

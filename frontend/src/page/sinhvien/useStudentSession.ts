@@ -72,8 +72,12 @@ export function useStudentSession(sessionId: string | null, enabled: boolean) {
           await studentService.joinSession(sessionId);
           joinedRef.current = true;
         }
-      } catch {
-        /* thử lại ở lượt sau */
+      } catch (err) {
+        // Phiên bị huỷ trong lúc chờ -> báo lỗi; lỗi khác: thử lại ở lượt sau
+        const data = (err as { response?: { data?: { code?: string; message?: string } } }).response?.data;
+        if (!stopped && data?.code === "session_closed") {
+          setError(data.message || "Phiên học đã kết thúc hoặc bị huỷ.");
+        }
       }
     }, 8000);
     return () => {

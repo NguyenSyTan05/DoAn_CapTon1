@@ -1,19 +1,14 @@
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import text
 
+from auth_utils import ADMIN_REQUIRED_MESSAGE, ADMIN_ROLE, role_required
 from extensions import db
 
 
 admin_engagement_bp = Blueprint(
     "admin_engagement", __name__, url_prefix="/auth/admin/engagement"
 )
-
-
-def _admin_required():
-    if get_jwt().get("role") != "admin":
-        return jsonify({"message": "Administrator access is required."}), 403
-    return None
 
 
 def _check_admin():
@@ -57,11 +52,8 @@ def _format_relative_time(seconds):
 
 
 @admin_engagement_bp.route("/overview", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def get_engagement_overview():
-    denied = _admin_required()
-    if denied:
-        return denied
     admin_denied = _check_admin()
     if admin_denied:
         return admin_denied
@@ -304,11 +296,8 @@ def get_engagement_overview():
 
 
 @admin_engagement_bp.route("/accounts", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def get_engagement_accounts():
-    denied = _admin_required()
-    if denied:
-        return denied
     admin_denied = _check_admin()
     if admin_denied:
         return admin_denied

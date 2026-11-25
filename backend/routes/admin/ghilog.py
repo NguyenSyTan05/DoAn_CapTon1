@@ -1,19 +1,13 @@
 import math
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, jwt_required
 from sqlalchemy import text
 
+from auth_utils import ADMIN_REQUIRED_MESSAGE, ADMIN_ROLE, role_required
 from extensions import db
 
 
 admin_logs_bp = Blueprint("admin_logs", __name__, url_prefix="/auth/admin")
-
-
-def _admin_required():
-    if get_jwt().get("role") != "admin":
-        return jsonify({"message": "Administrator access is required."}), 403
-    return None
 
 
 def _status_label(raw_status):
@@ -45,12 +39,8 @@ def _role_label(raw_role):
 
 
 @admin_logs_bp.route("/logs", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def get_admin_logs():
-    denied = _admin_required()
-    if denied:
-        return denied
-
     search = (request.args.get("search", "") or "").strip()
     role = (request.args.get("role", "all") or "all").strip()
     from_date = (request.args.get("fromDate") or "").strip()

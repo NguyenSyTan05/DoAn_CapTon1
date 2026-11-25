@@ -18,6 +18,7 @@ from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 
+from core.auth import ANY_MEMBER, LECTURER_ONLY, require_room_access
 from core.session_scope import normalize_session, session_param
 from modules.qa.qa_broadcast import QAConnectionManager
 from modules.slides.deck_store import MAX_PDF_BYTES, SlideDeck
@@ -37,7 +38,11 @@ from modules.slides.slide_store import (
 router = APIRouter()
 
 
-@router.post("/api/v1/slides/event", response_model=SlideEventOutput)
+@router.post(
+    "/api/v1/slides/event",
+    response_model=SlideEventOutput,
+    dependencies=[Depends(require_room_access(LECTURER_ONLY))],
+)
 async def record_slide_event(
     payload: SlideEventRequest, request: Request, session: str = Depends(session_param)
 ):
@@ -57,7 +62,11 @@ async def record_slide_event(
     return SlideEventOutput(**record.__dict__)
 
 
-@router.get("/api/v1/slides/engagement", response_model=SlideEngagementResponse)
+@router.get(
+    "/api/v1/slides/engagement",
+    response_model=SlideEngagementResponse,
+    dependencies=[Depends(require_room_access(ANY_MEMBER))],
+)
 async def slide_engagement(request: Request, session: str = Depends(session_param)):
     """Đối chiếu timestamp câu hỏi với timestamp chuyển slide để tính số
     câu hỏi phát sinh trong lúc mỗi slide đang hiển thị — thuần tính toán
@@ -79,9 +88,9 @@ async def slide_engagement(request: Request, session: str = Depends(session_para
 # Giảng viên upload PDF (thân yêu cầu là chính file, Content-Type application/pdf) -> lưu
 # theo phiên -> phát "state" cho mọi sinh viên đang nghe /ws/slides. Sinh viên tải file qua
 # GET /slides/file rồi theo số trang ("page") giảng viên đang mở.
-# Chưa xác thực: ai biết session_id đều upload được (xem README ai-service).
+# Chỉ giảng viên của phiên upload được (core/auth.py); thành viên phiên mới tải được.
 
-@router.post("/api/v1/slides/file")
+@router.post("/api/v1/slides/file", dependencies=[Depends(require_room_access(LECTURER_ONLY))])
 async def upload_slide_file(request: Request, session: str = Depends(session_param)):
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > MAX_PDF_BYTES:
@@ -101,7 +110,7 @@ async def upload_slide_file(request: Request, session: str = Depends(session_par
     return deck.state()
 
 
-@router.get("/api/v1/slides/file")
+@router.get("/api/v1/slides/file", dependencies=[Depends(require_room_access(ANY_MEMBER))])
 async def download_slide_file(request: Request, session: str = Depends(session_param)):
     deck: SlideDeck = request.app.state.slide_decks.get(session)
     if not deck.has_file:
@@ -116,7 +125,7 @@ async def download_slide_file(request: Request, session: str = Depends(session_p
     )
 
 
-@router.get("/api/v1/slides/state")
+@router.get("/api/v1/slides/state", dependencies=[Depends(require_room_access(ANY_MEMBER))])
 async def slide_state(request: Request, session: str = Depends(session_param)):
     return request.app.state.slide_decks.get(session).state()
 

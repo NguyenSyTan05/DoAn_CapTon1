@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import text
@@ -9,6 +11,12 @@ from request_limits import request_limit_exceeded
 
 
 login_bp = Blueprint("login", __name__, url_prefix="/auth")
+
+TOKEN_HOURS_CONFIG = {
+    "admin": "ADMIN_TOKEN_HOURS",
+    "giang_vien": "LECTURER_TOKEN_HOURS",
+    "sinh_vien": "STUDENT_TOKEN_HOURS",
+}
 
 AUDIT_ROLES = {
     "admin": "ADMIN",
@@ -151,6 +159,7 @@ def login():
     token = create_access_token(
         identity=email,
         additional_claims={"role": role},
+        expires_delta=timedelta(hours=current_app.config[TOKEN_HOURS_CONFIG[role]]),
     )
 
     audit_logged = _record_audit_event(

@@ -16,7 +16,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
+  background: rgb(255, 255, 255);
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   padding: 0.75rem 1.25rem;
@@ -513,46 +513,77 @@
 .tableWrap {
   width: 100%;
   overflow-x: auto;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  background: transparent;
 }
 
 .classTable {
   width: 100%;
   min-width: 900px;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0 10px;
   text-align: left;
 }
 
-.classTable th,
-.classTable td {
-  padding: 14px 16px;
-  border-bottom: 1px solid #eef2f7;
-  color: #334155;
-  font-size: 13px;
-}
-
 .classTable th {
+  padding: 8px 10px 2px;
+  border: 0;
   color: #64748b;
-  background: #f8fafc;
+  background: transparent;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.classTable tbody tr:last-child td {
-  border-bottom: 0;
+.classTable th:first-child {
+  text-align: center;
 }
 
-.classTable tbody tr:hover,
-.classTable tbody tr.selectedRow {
+.classTable td {
+  padding: 14px 10px;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  background: #fff;
+  vertical-align: middle;
+}
+
+.classTable tbody tr td:first-child {
+  border-left: 1px solid #e2e8f0;
+  border-radius: 14px 0 0 14px;
+}
+
+.classTable tbody tr td:last-child {
+  border-right: 1px solid #e2e8f0;
+  border-radius: 0 14px 14px 0;
+}
+
+.classTable tbody tr {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+  transition:
+    border-color 0.18s,
+    box-shadow 0.18s,
+    background 0.18s;
+}
+
+.classTable tbody tr:hover td,
+.classTable tbody tr.selectedRow td {
   background: #f8fbff;
+  border-top-color: #bfdbfe;
+  border-bottom-color: #bfdbfe;
+}
+
+.classTable tbody tr.selectedRow td:first-child {
+  border-left-color: #93c5fd;
+  box-shadow: -2px 0 0 #60a5fa;
+}
+
+.classTable tbody tr.selectedRow td:last-child {
+  border-right-color: #93c5fd;
 }
 
 .checkboxCell {
-  width: 44px;
+  width: 52px;
   text-align: center !important;
 }
 
@@ -565,34 +596,87 @@
 
 .classCodeBadge {
   display: inline-flex;
-  padding: 4px 8px;
+  max-width: 150px;
+  padding: 0;
   color: #1d4ed8;
-  background: #eff6ff;
-  border-radius: 6px;
+  background: transparent;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.classNameCell {
-  color: #0f172a;
-  font-weight: 600;
+.classCodeCell {
+  min-width: 180px;
+}
+
+.classNameColumn {
+  min-width: 150px;
 }
 
 .classDescriptionCell {
-  max-width: 360px;
-  margin-top: 4px;
+  max-width: 220px;
+  margin-top: 2px;
   overflow: hidden;
   color: #64748b;
+  font-size: 0.8rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hoursValue {
+.classNameCell {
+  max-width: 220px;
+  margin-top: 3px;
+  overflow: hidden;
   color: #0f172a;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.hoursDivider {
+.courseCodeCell {
+  width: 64px;
+  text-align: center;
+}
+
+.courseCodeBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 7px;
+  color: #475569;
+  background: #f1f5f9;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scheduleCardCell {
+  width: 118px;
+}
+
+.studentCountCell {
+  width: 64px;
+  color: #2563eb !important;
+  text-align: center;
+  font-weight: 500;
+}
+
+.hoursCardCell {
+  width: 210px;
+}
+
+.hoursProgressText {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #2563eb;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hoursPercent {
   color: #94a3b8;
 }
 

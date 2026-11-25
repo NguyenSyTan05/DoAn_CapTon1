@@ -77,7 +77,8 @@ Các biến trong `backend/.env` (xem `.env.example`):
 | Biến | Ý nghĩa |
 |---|---|
 | `DATABASE_URL` | Chuỗi kết nối. **Phải dùng** `postgresql://…` hoặc `postgresql+psycopg2://…` (không dùng `+asyncpg`). |
-| `SECRET_KEY` | Khóa ký JWT, đặt chuỗi dài ngẫu nhiên. |
+| `SECRET_KEY` | Khóa ký JWT, **bắt buộc, tối thiểu 32 ký tự**, mỗi người tự tạo (xem mục 4.5). Thiếu hoặc quá ngắn thì Flask không khởi động. |
+| `ADMIN_TOKEN_HOURS`, `LECTURER_TOKEN_HOURS`, `STUDENT_TOKEN_HOURS` | (Tuỳ chọn) Thời hạn token theo vai trò, mặc định 1 / 8 / 4 giờ. |
 | `FRONTEND_ORIGIN` | **Phải là `http://localhost:4000`** (mặc định của code là 5173 nên nếu quên sẽ bị lỗi CORS). |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | Gửi email xác thực khi đăng ký (xem `backend/SMTP_SETUP.md`). |
 | `EMAIL_VALIDATION_API_KEY` | Kiểm tra email có thật (xem `backend/EMAIL_VALIDATION.md`). |
@@ -91,7 +92,14 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-Không bắt buộc cấu hình. Tuỳ chọn: `WHISPER_MODEL_PATH=<thư mục model Whisper CT2>` để dùng model đã fine-tune thay cho `small` mặc định. Chi tiết: `ai-service/README.md`.
+**Bắt buộc:** biến môi trường `SECRET_KEY` phải **giống hệt** `SECRET_KEY` trong `backend/.env` (xem mục 4.5). ai-service **không đọc file `.env`**, nên đặt trong terminal trước khi chạy (mục 5).
+
+Tuỳ chọn:
+- `WHISPER_MODEL_PATH=<thư mục model Whisper CT2>` để dùng model đã fine-tune thay cho `small` mặc định.
+- `FLASK_API_URL` (mặc định `http://127.0.0.1:5000`), `AI_ALLOWED_ORIGINS` (mặc định `http://localhost:4000`).
+- `AI_AUTH_MODE=off` chỉ để chạy test/debug không cần đăng nhập, **không dùng khi demo hay triển khai**.
+
+Chi tiết: `ai-service/README.md`.
 
 > Nếu cài `hdbscan` lỗi trên Windows, cài *Microsoft C++ Build Tools* hoặc tìm bản wheel phù hợp với Python 3.11.
 
@@ -108,6 +116,25 @@ copy .env.example .env.local
 | `NEXT_PUBLIC_API_BASE_URL` | `http://127.0.0.1:5000` | Địa chỉ Flask |
 | `NEXT_PUBLIC_AI_URL` | `http://<host-đang-mở>:8000` | Địa chỉ FastAPI AI |
 
+### 4.5. Khóa bí mật `SECRET_KEY` (quan trọng)
+
+**Mỗi thành viên tự tạo khóa riêng cho máy của mình. Không dùng chung khóa giữa các thành viên, không commit, không gửi qua chat.**
+
+Lý do: mỗi người chạy Flask và ai-service trên máy mình. Flask ký token đăng nhập bằng `SECRET_KEY`, ai-service dùng đúng khóa đó để kiểm tra token. Vì vậy chỉ cần **hai tiến trình trên cùng một máy dùng cùng một giá trị**. Khóa của máy này không ảnh hưởng máy khác. Dùng chung DB Neon không có nghĩa là phải dùng chung khóa, vì khóa không được lưu trong DB.
+
+Tạo khóa ngẫu nhiên (chạy một lần cho mỗi máy):
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+1. Dán kết quả vào `backend/.env`: `SECRET_KEY=<chuỗi vừa tạo>`.
+2. Mỗi lần mở terminal chạy ai-service, đặt cùng giá trị đó (mục 5).
+
+Lưu ý:
+- Tối thiểu 32 ký tự. Không đặt dấu ngoặc nhọn `<>` hay dấu cách thừa quanh giá trị; hai nơi phải giống nhau từng ký tự.
+- Đổi khóa thì mọi token cũ mất hiệu lực, phải **đăng nhập lại**.
+- **Ngoại lệ:** nếu cả nhóm cùng dùng *một* Flask hoặc *một* ai-service đã triển khai chung trên máy chủ, thì khóa của hai dịch vụ đó phải trùng nhau và do người quản trị máy chủ giữ, đặt bằng biến môi trường trên máy chủ, không để trong repo.
+- Khóa dễ đoán (ví dụ ghép từ tên dự án) cho phép ai biết nó tự tạo token quản trị. Khi demo công khai hoặc triển khai thật, luôn dùng khóa ngẫu nhiên như trên.
+
 ---
 
 ## 5. Chạy hệ thống
@@ -115,12 +142,14 @@ copy .env.example .env.local
 Mở **3 cửa sổ terminal** (đã kích hoạt `.venv` ở hai terminal Python):
 
 ```powershell
-# Terminal 1 — Flask (cổng 5000)
+# Terminal 1 — Flask (cổng 5000). Tự đọc SECRET_KEY từ backend/.env
 cd backend
 python app.py
 
 # Terminal 2 — AI (cổng 8000). Lần đầu tải model nên chờ vài phút
+# SECRET_KEY phải GIỐNG HỆT backend/.env (ai-service không đọc file .env)
 cd ai-service
+$env:SECRET_KEY = "<dán đúng chuỗi trong backend/.env, bỏ dấu <>>"
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 # Terminal 3 — Frontend (cổng 4000)
@@ -193,10 +222,17 @@ Mỗi bước chi tiết (API nào được gọi, dữ liệu ghi ở đâu) c�
 ## 8. Kiểm thử tự động
 
 ```powershell
+# ai-service (test tự đặt SECRET_KEY riêng, không cần chuẩn bị)
 cd ai-service
-python -m pytest -q          # khoảng 2 phút (nạp model thật), kỳ vọng: 117 passed
+pip install -r requirements-dev.txt
+python -m pytest -q          # khoảng 2 phút (nạp model thật)
+
+# Backend Flask (dùng SQLite trong bộ nhớ, không chạm DB Neon)
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest tests -q
 ```
-Backend Flask và frontend hiện chưa có bộ test tự động; kiểm tra frontend bằng `npm run build` (có kiểm tra TypeScript).
+Frontend chưa có test tự động; kiểm tra bằng `npm run build` (có kiểm tra TypeScript).
 
 ---
 
@@ -204,6 +240,10 @@ Backend Flask và frontend hiện chưa có bộ test tự động; kiểm tra f
 
 | Triệu chứng | Nguyên nhân / cách xử lý |
 |---|---|
+| Flask báo `Thiếu hoặc SECRET_KEY quá ngắn` | `SECRET_KEY` trong `backend/.env` thiếu hoặc dưới 32 ký tự. Tạo khóa mới theo mục 4.5. |
+| ai-service báo `SECRET_KEY phải có ít nhất 32 ký tự` | Chưa đặt `$env:SECRET_KEY` trong terminal chạy ai-service (nó không đọc `.env`). Mỗi lần mở terminal mới phải đặt lại. |
+| Đăng nhập được nhưng phòng AI báo lỗi 401 / phiên hết hạn | `SECRET_KEY` của ai-service khác Flask, hoặc vừa đổi khóa mà chưa đăng nhập lại. Đặt cùng giá trị, khởi động lại cả hai, đăng nhập lại. |
+| `pip` báo `Fatal error in launcher` | `.venv` được copy từ máy khác. Xóa `.venv`, tạo lại bằng `python -m venv .venv`, cài bằng `python -m pip install -r requirements.txt`. |
 | Flask báo `Either 'SQLALCHEMY_DATABASE_URI' … must be set` | Chưa có `backend/.env` hoặc thiếu `DATABASE_URL`. |
 | Flask lỗi kết nối/`asyncpg` | `DATABASE_URL` đang dùng `postgresql+asyncpg://`. Đổi thành `postgresql+psycopg2://`. |
 | Trình duyệt báo CORS khi đăng nhập | `FRONTEND_ORIGIN` trong `backend/.env` chưa là `http://localhost:4000`, hoặc chưa khởi động lại Flask sau khi sửa. |
@@ -219,6 +259,7 @@ Backend Flask và frontend hiện chưa có bộ test tự động; kiểm tra f
 ## 10. Bảo mật khi đưa lên GitHub
 
 - **Không commit** `backend/.env`, `frontend/.env.local` (đã nằm trong `.gitignore`). Kiểm tra bằng `git status` trước khi push.
+- `SECRET_KEY` là bí mật của từng máy (mục 4.5). Nếu lỡ lộ, tạo khóa mới và đăng nhập lại.
 - README này có mật khẩu tài khoản test ở mục 6.1: chỉ chấp nhận được vì DB là riêng tư. Nếu lỡ lộ `DATABASE_URL`, hãy **đổi mật khẩu DB** trên Neon ngay.
 - Thư mục `frontend_vite_backup/` (≈ 265 MB) đã bị loại khỏi git.
 
@@ -226,7 +267,8 @@ Backend Flask và frontend hiện chưa có bộ test tự động; kiểm tra f
 
 ## 11. Giới hạn đã biết
 
-- **AI service chưa xác thực**: ai biết `session_id` đều vào được phòng AI (nghe phụ đề, tải slide). Hướng xử lý: FastAPI xác nhận token với Flask.
+- **Xác thực ai-service mới làm cho REST**: các API REST theo phòng (hỏi đáp, slide, dịch, gom nhóm) đã yêu cầu token và kiểm tra quyền vào phiên qua Flask (`GET /auth/sessions/<id>/access`). **WebSocket** (`/ws/live-translate`, `/ws/qa`, `/ws/slides`) **chưa kiểm tra**, ai biết `session_id` vẫn nghe được phụ đề. Việc xác thực WebSocket là giai đoạn tiếp theo.
+- Mỗi phòng khác UUID hoa/thường hoặc bỏ dấu gạch có thể bị coi là phòng khác trong ai-service (lỗi đã biết, chưa sửa).
 - Dữ liệu của AI service (câu hỏi, câu trả lời, slide, lịch sử phụ đề) **nằm trong RAM**, mất khi khởi động lại.
 - **Chất lượng STT chưa chuẩn** (đặc biệt tiếng Việt và giọng có accent); chưa đo WER bằng dữ liệu lớp học thật. Có thể gắn model đã fine-tune qua `WHISPER_MODEL_PATH`.
 - Trạng thái phiên học (LIVE/ENDED) do giảng viên bấm, không tự đổi theo giờ.

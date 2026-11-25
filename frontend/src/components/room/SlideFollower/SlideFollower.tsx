@@ -4,7 +4,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import { FileText, Presentation } from 'lucide-react';
-import { aiUrl, aiWsUrl } from '../../../lib/ai';
+import { aiFetch, aiWsUrl } from '../../../lib/ai';
 import styles from '../SlideViewer/SlideViewer.module.css';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -47,7 +47,7 @@ export default function SlideFollower() {
 
     const loadFile = async (version: number) => {
       try {
-        const res = await fetch(aiUrl('/api/v1/slides/file'), { cache: 'no-store' });
+        const res = await aiFetch('/api/v1/slides/file', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blobUrl = URL.createObjectURL(await res.blob());
         if (closed) {
@@ -94,7 +94,7 @@ export default function SlideFollower() {
     const resync = window.setInterval(async () => {
       const startedAt = Date.now();
       try {
-        const res = await fetch(aiUrl('/api/v1/slides/state'), { cache: 'no-store' });
+        const res = await aiFetch('/api/v1/slides/state', { cache: 'no-store' });
         if (!res.ok || closed || lastPushAt > startedAt) return;
         applyState(await res.json());
       } catch {

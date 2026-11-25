@@ -51,15 +51,20 @@
 .logoText {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   font-size: 18px;
   font-weight: bold;
   color: #ffffff;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .logoText img {
-  width: 32px;
-  height: 32px;
+  width: 60px;
+  height: 60px;
   object-fit: contain;
   border: none;
   outline: none;
@@ -144,7 +149,7 @@
   gap: 16px;
   min-height: 64px;
   padding: 0 24px;
-  background: #070b1c;
+  background: #1f2b96;
 }
 
 .topbarActions {
@@ -181,7 +186,7 @@
 
 /* ---------- Lời chào ---------- */
 .greetingTitle {
-  font-size: 24px;
+  font-size: 27px;
   color: var(--text);
   margin: 0 0 6px;
 }
@@ -189,11 +194,11 @@
 .greetingSubtitle {
   color: var(--text-muted);
   margin: 0 0 24px;
-  font-size: 15px;
+  font-size: 18px;
 }
 
 .sectionTitle {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: bold;
   color: var(--text);
   margin: 0 0 12px;
@@ -221,13 +226,13 @@
 
 .joinCardPrimary {
   background: var(--accent);
-  border: none;
+  border: 1px solid #2563eb;
   color: #ffffff;
 }
 
 .joinCard {
   background: var(--surface-hover);
-  border-color: var(--border);
+  border-color: #2563eb;
   color: var(--text);
 }
 
@@ -253,11 +258,11 @@
 
 .joinTitle {
   font-weight: bold;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .joinSubtitle {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--text-muted);
 }
 
@@ -293,7 +298,7 @@
 
 .tab {
   border: none;
-  background: #ffffff;
+  background: #b8c0c5;
   color: var(--text-muted);
   padding: 8px 14px;
   border-radius: 8px;
@@ -319,8 +324,8 @@
   gap: 12px;
   padding: 14px;
   margin-bottom: 8px;
-  background: #ffffff;
-  border: 1px solid var(--border);
+  background: #2961fa;
+  border: 1px solid #2563eb;
   border-radius: 10px;
 }
 
@@ -352,12 +357,12 @@
 
 .classInstructor {
   font-size: 13px;
-  color: var(--text-muted);
+  color: #ffffff;
 }
 
 .classMeta {
   font-size: 12px;
-  color: var(--text-faint);
+  color: #ffffff;
 }
 
 .statusOngoing,
@@ -504,6 +509,11 @@
   font-size: 13px;
   font-weight: bold;
   color: var(--text);
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .modalTopBarLogo {

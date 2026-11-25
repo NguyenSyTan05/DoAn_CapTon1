@@ -65,10 +65,14 @@ _ARTIFACTS = (
     "cám ơn các bạn đã theo dõi", "cảm ơn các bạn đã lắng nghe", "cảm ơn quý vị và các bạn",
     "cảm ơn mọi người đã xem", "cám ơn các bạn, tạm biệt", "cảm ơn các bạn, tạm biệt",
     "xin chào và hẹn gặp lại", "xin chào tạm biệt", "chào tạm biệt", "tạm biệt các bạn",
-    "bye bye, tạm biệt", "bài giảng đại học bằng tiếng việt", "ghiền mì gõ", "fap tv",
+    "bye bye, tạm biệt", "bài giảng đại học bằng tiếng việt", "bài giảng và hội thoại tiếng việt",
+    "nội dung bài giảng và thảo luận trên lớp học", "thảo luận trên lớp học bằng tiếng việt",
+    "đầy đủ dấu thanh điệu", "dấu câu rõ ràng từng từ ngữ", "ghiền mì gõ", "fap tv",
     "storm meeting done", "thank you for listening", "thanks for listening",
     "subscribe to my channel", "please subscribe", "don't forget to subscribe",
     "see you in the next video", "mbc news", "sbs news", "kbs news",
+    # Whisper ảo giác khi nhìn slide/màn hình trong phòng học
+    "picture", "image", "photo", "video",
 )
 
 # Mẫu câu cố định / câu "học vẹt" Whisper hay tự bịa khi không nói (im lặng, tiếng thở, tạp âm):
@@ -110,6 +114,51 @@ _ROMANCE_LEAK = re.compile(
 
 NO_SPEECH_LIMIT = 0.30  # trên mức này coi câu ngắn/mẫu cố định là ảo giác
 LOGPROB_LIMIT = -0.75   # dưới mức này coi câu ngắn/mẫu cố định là ảo giác
+
+# ---------------------------------------------------------------------------
+# Post-processing bằng underthesea (tùy chọn — nếu chưa cài thì bỏ qua)
+# Sửa lỗi dấu thanh điệu tiếng Việt mà Whisper hay nhầm (sắc↔nặng, huyền↔nặng...)
+# ---------------------------------------------------------------------------
+_underthesea_normalize = None
+_underthesea_checked = False
+
+def _get_underthesea_normalize():
+    """Lazy-load underthesea.text_normalize. Trả None nếu chưa cài."""
+    global _underthesea_normalize, _underthesea_checked
+    if _underthesea_checked:
+        return _underthesea_normalize
+    _underthesea_checked = True
+    try:
+        from underthesea import text_normalize  # type: ignore
+        _underthesea_normalize = text_normalize
+        import logging
+        logging.getLogger("classbridge.text_filters").info(
+            "✅ underthesea text_normalize loaded — Vietnamese tone post-correction enabled"
+        )
+    except ImportError:
+        import logging
+        logging.getLogger("classbridge.text_filters").warning(
+            "⚠️  underthesea chưa được cài — bỏ qua sửa thanh điệu. "
+            "Cài bằng: pip install underthesea"
+        )
+    return _underthesea_normalize
+
+
+def apply_vi_tone_correction(text: str) -> str:
+    """Sửa lỗi dấu thanh điệu tiếng Việt sau Whisper bằng underthesea.text_normalize().
+    Nếu underthesea chưa cài, trả nguyên bản text. An toàn 100% (try/except bảo vệ)."""
+    fn = _get_underthesea_normalize()
+    if fn is None or not text:
+        return text
+    try:
+        corrected = fn(text)
+        # Chỉ dùng kết quả nếu độ dài hợp lý (không bị rút ngắn quá nhiều)
+        if corrected and len(corrected) >= len(text) * 0.7:
+            return corrected
+    except Exception:
+        pass
+    return text
+
 
 
 def normalize_text(text: str) -> str:
@@ -289,5 +338,13 @@ def decide_language(text: str, whisper_lang: str | None = None, whisper_prob: fl
 
 
 def finalize_text(text: str) -> str:
-    """Chuỗi chuẩn hoá hiển thị dùng sau khi STT: dọn ký tự + khử lặp."""
-    return remove_repeated_phrases(clean_transcript_text(text))
+    """Chuỗi chuẩn hoá hiển thị dùng sau khi STT: dọn ký tự + khử lặp + loại từ ảo giác cuối câu."""
+    s = remove_repeated_phrases(clean_transcript_text(text))
+    # Xoá từ ảo giác Whisper thêm vào cuối (VD: "...cloud architecture. Picture.")
+    # Chỉ xoá nếu từ cuối cùng là artifact đứng riêng (< 3 từ trong câu cuối)
+    _TRAILING_NOISE = re.compile(
+        r"(?:[.!?]\s+|\s+)(?:picture|image|photo|video|music|silence|applause|laughter)[.!?]?\s*$",
+        re.IGNORECASE,
+    )
+    s = _TRAILING_NOISE.sub("", s).rstrip(" ,;")
+    return s.strip()

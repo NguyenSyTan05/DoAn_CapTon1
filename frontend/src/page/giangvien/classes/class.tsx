@@ -125,18 +125,6 @@ export default function ClassManagement() {
     );
   };
 
-  const toggleAllClasses = () => {
-    const visibleIds = filteredClasses.map((cls) => cls.id);
-    const allVisibleSelected =
-      visibleIds.length > 0 &&
-      visibleIds.every((id) => selectedClassIds.includes(id));
-    setSelectedClassIds((selected) =>
-      allVisibleSelected
-        ? selected.filter((id) => !visibleIds.includes(id))
-        : [...new Set([...selected, ...visibleIds])],
-    );
-  };
-
   const handleDownloadTemplate = () => {
     // Tải file mẫu Excel do backend sinh ra (đúng định dạng import)
     api
@@ -603,7 +591,17 @@ export default function ClassManagement() {
                       selectedClassIds.includes(cls.id),
                     )
                   }
-                  onChange={toggleAllClasses}
+                  onChange={() => {
+                    const visibleIds = filteredClasses.map((cls) => cls.id);
+                    const allVisibleSelected =
+                      visibleIds.length > 0 &&
+                      visibleIds.every((id) => selectedClassIds.includes(id));
+                    setSelectedClassIds((selected) =>
+                      allVisibleSelected
+                        ? selected.filter((id) => !visibleIds.includes(id))
+                        : [...new Set([...selected, ...visibleIds])],
+                    );
+                  }}
                 />
               </th>
               <th>Mã lớp</th>
@@ -650,12 +648,10 @@ export default function ClassManagement() {
                       onChange={() => toggleClassSelection(cls.id)}
                     />
                   </td>
-                  <td>
-                    <span className={styles.classCodeBadge}>
-                      {cls.classCode}
-                    </span>
+                  <td className={styles.classCodeCell}>
+                    <span className={styles.classCodeBadge}>{cls.classCode}</span>
                   </td>
-                  <td>
+                  <td className={styles.classNameColumn}>
                     <div className={styles.classNameCell}>{cls.name}</div>
                     {cls.description && (
                       <div className={styles.classDescriptionCell}>
@@ -663,7 +659,7 @@ export default function ClassManagement() {
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td className={styles.scheduleCardCell}>
                     <div className={styles.scheduleCell}>
                       <span>{cls.weekday || "?"}</span>
                       <span>
@@ -673,13 +669,21 @@ export default function ClassManagement() {
                       </span>
                     </div>
                   </td>
-                  <td>{cls.studentCount ?? 0}</td>
-                  <td>
-                    <span className={styles.hoursValue}>
-                      {cls.hoursLearned ?? "?"}
-                    </span>
-                    <span className={styles.hoursDivider}> / </span>
-                    <span>{cls.hours ?? "?"} giờ</span>
+                  <td className={styles.studentCountCell}>
+                    {cls.studentCount ?? 0}
+                  </td>
+                  <td className={styles.hoursCardCell}>
+                    <div className={styles.hoursProgressText}>
+                      <span>
+                        {cls.hoursLearned ?? "?"} / {cls.hours ?? "?"} giờ
+                      </span>
+                      <span className={styles.hoursPercent}>
+                        {cls.hours && cls.hours > 0
+                          ? Math.round(((cls.hoursLearned ?? 0) / cls.hours) * 100)
+                          : 0}
+                        %
+                      </span>
+                    </div>
                   </td>
                   <td className={styles.actionsCell}>
                     <div

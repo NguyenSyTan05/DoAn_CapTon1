@@ -1,8 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { Link } from "@/lib/router-compat";
+import { useStoredSession } from "@/lib/session";
+import api from "../../services/api";
+import authService from "../../services/auth.service";
 import {
-  GraduationCap,
   ArrowRight,
   Play,
   Brain,
@@ -10,17 +13,39 @@ import {
   LayoutGrid,
   Sparkles,
 } from "lucide-react";
+import Footer from "@/components/shell/footer";
 import styles from "./landing.module.css";
 
 // Trang chủ giới thiệu (giao diện lấy từ dự án /sinhvien)
 export default function Landing() {
+  // Đã đăng nhập (token còn hạn) -> hiện tài khoản và đưa thẳng vào trang theo vai trò
+  const session = useStoredSession();
+  const startHref = session ? session.home : "/login";
+
+  const handleLogout = async () => {
+    try {
+      await api.post("/auth/logout"); // ghi audit log, lỗi cũng bỏ qua (giống trang sinh viên)
+    } catch {
+      /* ignore */
+    }
+    authService.logout();
+    // Báo cho useStoredSession cập nhật ngay trong tab hiện tại
+    window.dispatchEvent(new Event("storage"));
+  };
+
   return (
     <div className={styles.container}>
       <header className={styles.header}>
         <Link to="/" className={styles.logoWrapper}>
-          <div className={styles.logoIcon}>
-            <GraduationCap size={22} color="#ffffff" />
-          </div>
+          <span className={styles.logoIcon}>
+            <Image
+              src="/classbridge-logo-transparent.png"
+              alt=""
+              width={42}
+              height={42}
+              preload
+            />
+          </span>
           <span className={styles.logoText}>ClassBridge</span>
         </Link>
 
@@ -31,8 +56,21 @@ export default function Landing() {
         </nav>
 
         <div className={styles.authGroup}>
-          <Link to="/login" className={styles.loginBtn}>Đăng nhập</Link>
-          <Link to="/register" className={styles.signupBtn}>Đăng ký</Link>
+          {session ? (
+            <>
+              <button type="button" onClick={handleLogout} className={styles.loginBtn}>
+                Đăng xuất
+              </button>
+              <Link to={session.home} className={styles.signupBtn}>
+                {session.user.full_name || session.user.email || "Tài khoản"} · Vào hệ thống
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className={styles.loginBtn}>Đăng nhập</Link>
+              <Link to="/register" className={styles.signupBtn}>Đăng ký</Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -54,7 +92,7 @@ export default function Landing() {
         </p>
 
         <div className={styles.actionButtons}>
-          <Link to="/login" className={styles.actionLink}>
+          <Link to={startHref} className={styles.actionLink}>
             <button type="button" className={styles.primaryBtn}>
               Vào phòng học ngay
               <ArrowRight size={16} />
@@ -85,42 +123,7 @@ export default function Landing() {
         </div>
       </aside>
 
-      <footer className={styles.footer}>
-        <div className={styles.footerContainer}>
-          <div className={styles.footerContent}>
-            <div className={styles.footerBrand}>
-              <img src="/logotachnen.png" className={styles.footerLogo} alt="Logo" />
-              <p>ClassBridge - AI</p>
-            </div>
-            <div className={styles.footerColumn}>
-              <h3>Điều hướng</h3>
-              <ul>
-                <li><Link to="/">Trang chủ</Link></li>
-                <li><a href="#">Giới thiệu</a></li>
-              </ul>
-            </div>
-            <div className={styles.footerColumn}>
-              <h3>Hỗ trợ</h3>
-              <ul>
-                <li><a href="#">Chính sách Bảo mật</a></li>
-                <li><a href="#">Điều khoản Dịch vụ</a></li>
-                <li><a href="#">Trung tâm trợ giúp</a></li>
-              </ul>
-            </div>
-            <div className={styles.footerColumn}>
-              <h3>Liên hệ</h3>
-              <ul>
-                <li>Đà Nẵng</li>
-                <li>classbridge38@gmail.com</li>
-              </ul>
-            </div>
-          </div>
-          <div className={styles.footerCopyright}>
-            &copy; 2026 ClassBridge - AI. Trợ giảng hỗ trợ công nghệ dành cho
-            giảng viên nước ngoài tại DTU.
-          </div>
-        </div>
-      </footer>
+      <Footer language="vi" />
     </div>
   );
 }

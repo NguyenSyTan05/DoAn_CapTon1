@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +67,9 @@ class Room:
     session: str
     subscribers: list[_Subscriber] = field(default_factory=list)
     history: deque = field(default_factory=lambda: deque(maxlen=HISTORY_LIMIT))
-    seq: int = 0
+    # Khởi tạo seq theo epoch-ms để khi khởi động lại backend không bao giờ trùng lại seg-1, seg-2
+    # đang có sẵn trên state React của trình duyệt người dùng.
+    seq: int = field(default_factory=lambda: int(time.time() * 1000) % 1_000_000_000)
     order_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def next_segment_id(self) -> int:
@@ -116,6 +119,25 @@ class RoomRegistry:
             )
         except Exception:  # kết nối đã chết hoặc quá chậm -> bỏ khỏi phòng
             self.leave(room.session, subscriber.websocket)
+
+    async def clear_room(self, session: str) -> None:
+        """Xoá lịch sử phụ đề trong RAM + file transcript của phiên và báo mọi client xoá màn hình."""
+        room = self.room(session)
+        room.history.clear()
+        try:
+            safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", session or "default")[:80] or "default"
+            for ext in ("jsonl", "txt"):
+                p = _TRANSCRIPTS_DIR / f"{safe_name}.{ext}"
+                if p.is_file():
+                    p.unlink()
+        except Exception:
+            logger.debug("Không xoá được file transcript cũ của '%s'", session, exc_info=True)
+        targets = list(room.subscribers)
+        if targets:
+            await asyncio.gather(
+                *(self._send(room, sub, {"type": "clear"}) for sub in targets),
+                return_exceptions=True,
+            )
 
     async def publish_final(self, session: str, message: dict[str, Any]) -> None:
         """Lời gốc vừa nhận dạng xong: phát song song cho mọi người xem 'progressive'."""

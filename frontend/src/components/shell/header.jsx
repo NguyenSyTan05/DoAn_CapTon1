@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "@/lib/router-compat";
+import Image from "next/image";
+import NextLink from "next/link";
+import { useNavigate } from "@/lib/router-compat";
 import { LuChevronDown, LuSearch } from "react-icons/lu";
 import authService from "../../services/auth.service";
 import "./header.css";
@@ -57,10 +59,22 @@ export default function Header({ user: authenticatedUser }) {
 
   return (
     <header className="app-header">
-      <Link className="app-header-brand" to="/admin" aria-label="ClassBridge">
-        <img src="/ClassBridge.png" alt="" />
+      <NextLink
+        className="app-header-brand"
+        href="/"
+        aria-label="ClassBridge"
+      >
+        <span className="app-header-brand-mark">
+          <Image
+            src="/classbridge-logo-transparent.png"
+            alt=""
+            width={40}
+            height={38}
+            preload
+          />
+        </span>
         <span>ClassBridge</span>
-      </Link>
+      </NextLink>
 
       <label className="app-header-search">
         <LuSearch size={17} aria-hidden="true" />

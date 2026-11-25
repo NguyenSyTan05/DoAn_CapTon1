@@ -5,10 +5,11 @@ from pathlib import PurePath
 from uuid import UUID
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from auth_utils import LECTURER_REQUIRED_MESSAGE, LECTURER_ROLE, role_required
 from extensions import db
 
 
@@ -32,9 +33,6 @@ MAX_QUESTION_IMAGES_SIZE_BYTES = 8 * 1024 * 1024
 
 
 def _lecturer_id():
-    if get_jwt().get("role") != "giang_vien":
-        return None
-
     email = get_jwt_identity()
     if not isinstance(email, str):
         return None
@@ -252,7 +250,7 @@ def _serialize_question(row):
 
 
 @lecturer_quick_questions_bp.route("/<session_id>/quick-questions", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def list_quick_questions(session_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:
@@ -331,7 +329,7 @@ def list_quick_questions(session_id):
 @lecturer_quick_questions_bp.route(
     "/<session_id>/quick-questions", methods=["POST"]
 )
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def create_quick_question(session_id):
     lecturer_id = _lecturer_id()
     if not lecturer_id:

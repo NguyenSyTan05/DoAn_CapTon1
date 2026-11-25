@@ -4,11 +4,14 @@ session_scope.py (core)
 [CUSTOM] Gắn dữ liệu theo PHIÊN HỌC (session). Mỗi phiên có kho riêng cho câu hỏi,
 câu trả lời, sự kiện slide; lớp này khác lớp kia không thấy dữ liệu của nhau.
 
-`session` là `session_id` của Flask (UUID). Không truyền `session` -> dùng phạm vi
-mặc định "" (hành vi cũ, một phòng chung) để /room và /student cũ vẫn chạy.
+`session` là `session_id` của Flask (UUID). Không truyền `session` -> phạm vi
+mặc định "" (hành vi cũ, một phòng chung) — CHỈ dùng được khi AI_AUTH_MODE=off.
+Ở chế độ enforce (mặc định), mọi route REST theo phòng (core/auth.require_room_access)
+trả 422 nếu thiếu `?session=` hoặc `session` không phải UUID; /room và /student cũ
+không có session sẽ không tải được dữ liệu phòng.
 
-Chưa có xác thực: ai biết session_id đều đọc/ghi được phòng đó. Việc kiểm tra quyền
-(token Flask) là bước riêng — xem README của ai-service.
+Kiểm tra quyền (token Flask + thành viên phiên) cho REST nằm ở core/auth.py;
+WebSocket chưa kiểm tra (vẫn nhận phạm vi mặc định) — xem README của ai-service.
 """
 
 from __future__ import annotations

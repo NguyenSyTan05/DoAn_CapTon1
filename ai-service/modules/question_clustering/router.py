@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from core.auth import require_user
 
 from modules.question_clustering.schema import (
     AggregateRequest,
@@ -30,10 +32,16 @@ router = APIRouter()
     "/api/v1/questions/aggregate",
     response_model=AggregateResponse,
     responses={422: {"model": ErrorResponse}, 400: {"model": ErrorResponse}},
+    dependencies=[Depends(require_user)],
 )
 async def aggregate_questions(payload: AggregateRequest, request: Request):
     """Gom cụm câu hỏi song ngữ EN/VI và chọn câu hỏi đại diện cho Giảng viên."""
-    aggregator: CustomSemanticQuestionAggregator = request.app.state.aggregator
+    aggregator: CustomSemanticQuestionAggregator | None = request.app.state.aggregator
+    if aggregator is None:
+        bg_task = getattr(request.app.state, "_bg_loader_task", None)
+        if bg_task is not None:
+            await bg_task
+            aggregator = request.app.state.aggregator
     if aggregator is None:
         raise HTTPException(
             status_code=503,

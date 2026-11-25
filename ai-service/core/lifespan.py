@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from core import auth
 from core.ai import ai_service
 from core.session_scope import SessionScoped
 from modules.live_translate.rooms import RoomRegistry
@@ -32,6 +33,9 @@ logger = logging.getLogger("classbridge.lifespan")
 # --- Quản lý vòng đời (Lifespan): Tải toàn bộ model 1 lần khi khởi động ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Cấu hình xác thực sai (SECRET_KEY ngắn, AI_AUTH_MODE lạ) -> dừng trước khi nạp model
+    auth.reload_settings()
+    auth.validate_settings()
     logger.info("Đang tải toàn bộ mô hình AI lên bộ nhớ...")
     try:
         # 1. Nạp NLLB-200 trên CUDA TRƯỚC khi khởi tạo CTranslate2 WhisperEngine để tránh xung đột context CUDA trên Windows
@@ -49,25 +53,18 @@ async def lifespan(app: FastAPI):
         app.state.aggregator = None
         logger.info("✅ STT %s (%s/%s) đã sẵn sàng", engine.name, engine.device, engine.compute_type)
 
-        # 3. Nạp MiniLM chạy nền trên CPU để gom cụm câu hỏi
-        async def _load_heavy_models_bg() -> None:
-            try:
-                from modules.question_clustering.semantic_question_aggregator import (
-                    CustomSemanticQuestionAggregator,
-                )
+        # 3. Nạp MiniLM trên CPU để gom cụm câu hỏi (nhường VRAM cho STT + NLLB)
+        from modules.question_clustering.semantic_question_aggregator import (
+            CustomSemanticQuestionAggregator,
+        )
 
-                agg = await asyncio.to_thread(
-                    CustomSemanticQuestionAggregator, device="cpu", translator=ai_service
-                )
-                app.state.aggregator = agg
-                logger.info(
-                    "✅ Semantic Question Aggregator đã sẵn sàng (Chiến lược: %s)",
-                    agg.clustering_strategy_name,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("⚠️ Không nạp được MiniLM Aggregator: %s", exc)
-
-        app.state._bg_loader_task = asyncio.create_task(_load_heavy_models_bg())
+        app.state.aggregator = await asyncio.to_thread(
+            CustomSemanticQuestionAggregator, device="cpu", translator=ai_service
+        )
+        logger.info(
+            "✅ Semantic Question Aggregator đã sẵn sàng (Chiến lược: %s)",
+            app.state.aggregator.clustering_strategy_name,
+        )
 
         # 3. Lecturer Answers (Q&A) store — in-memory for now (no database
         #    yet). Swappable: see modules/qa/answer_store.py docstring.

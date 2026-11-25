@@ -185,9 +185,14 @@ export default function StudentHome() {
         <div className={styles.joinScreen}>
           <div className={styles.modalCard}>
             <div className={styles.modalTopBar}>
-              <span className={styles.modalTopBarBrand}>
+              <button
+                type="button"
+                className={styles.modalTopBarBrand}
+                onClick={() => navigate("/")}
+                aria-label="Về trang chủ"
+              >
                 <img src="/Ai.png" alt="Logo" className={styles.modalTopBarLogo} /> ClassBridge
-              </span>
+              </button>
               <button className={styles.modalCloseBtn} onClick={closeJoin}>
                 <X size={16} />
               </button>
@@ -234,9 +239,14 @@ export default function StudentHome() {
     <div className={styles.page}>
       <header className={styles.topbar}>
         <div className={styles.logoArea}>
-          <span className={styles.logoText}>
-            <img src="/Ai.png" alt="Logo" /> ClassBridge
-          </span>
+          <button
+            type="button"
+            className={styles.logoText}
+            onClick={() => navigate("/")}
+            aria-label="Về trang chủ"
+          >
+            <img src="/logoclass-transparent.png" alt="Logo" /> ClassBridge
+          </button>
         </div>
 
         <div className={styles.topbarActions}>

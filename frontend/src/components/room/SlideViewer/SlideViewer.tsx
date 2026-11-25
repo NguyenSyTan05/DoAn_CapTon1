@@ -1,5 +1,5 @@
 "use client";
-import { aiUrl } from '../../../lib/ai';
+import { aiFetch } from '../../../lib/ai';
 import React, { useCallback, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -33,7 +33,7 @@ export default function SlideViewer({ onSlideChange }: SlideViewerProps) {
 
   const reportSlideChange = useCallback((slideNumber: number) => {
     onSlideChange?.(slideNumber);
-    fetch(aiUrl("/api/v1/slides/event"), {
+    aiFetch("/api/v1/slides/event", {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slide_number: slideNumber }),
@@ -54,7 +54,7 @@ export default function SlideViewer({ onSlideChange }: SlideViewerProps) {
   const shareFile = async (pdf: File) => {
     setShareStatus('uploading');
     try {
-      const res = await fetch(aiUrl('/api/v1/slides/file'), {
+      const res = await aiFetch('/api/v1/slides/file', {
         method: 'POST',
         headers: { 'Content-Type': 'application/pdf', 'X-Filename': encodeURIComponent(pdf.name) },
         body: pdf,

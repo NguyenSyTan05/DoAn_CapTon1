@@ -49,10 +49,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# --- Cấu hình CORS để Frontend Next.js gọi được cả REST và WebSocket ---
+# --- Cấu hình CORS để Frontend Next.js gọi được REST ---
+DEFAULT_ALLOWED_ORIGINS = "http://localhost:4000,http://127.0.0.1:4000"
+allowed_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("AI_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Hỗ trợ cả localhost:3000 và localhost:4000
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

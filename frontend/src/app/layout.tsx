@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ActivityTracker from "../components/shell/ActivityTracker";
+import AiAccessNotice from "../components/shell/AiAccessNotice";
 
 export const metadata: Metadata = {
   title: "ClassBridge - AI Classroom",
@@ -29,6 +30,7 @@ export default function RootLayout({
     <html lang="vi">
       <body className="bg-[#0b1120] text-slate-200 antialiased">
         <ActivityTracker />
+        <AiAccessNotice />
         {children}
       </body>
     </html>

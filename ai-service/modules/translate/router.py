@@ -14,15 +14,20 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.auth import require_user
 from core.ai import ai_service
 from modules.translate.schema import TranslateRequest, TranslateResponse
 
 router = APIRouter()
 
 
-@router.post("/api/v1/translate", response_model=TranslateResponse)
+@router.post(
+    "/api/v1/translate",
+    response_model=TranslateResponse,
+    dependencies=[Depends(require_user)],
+)
 async def translate_text(payload: TranslateRequest):
     text = payload.text.strip()
     if not text:

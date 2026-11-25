@@ -95,23 +95,32 @@ export default function LecturerSidebar() {
       }`}
       aria-label="Khu vực giảng viên"
     >
-      <button
-        type="button"
-        className={styles.sidebarHeaderToggle}
-        aria-label={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
-        aria-expanded={!isCollapsed}
-        title={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
-        onClick={() => setIsCollapsed((collapsed) => !collapsed)}
-      >
+      <div className={styles.sidebarHeaderToggle}>
         {!isCollapsed && (
-          <span className={styles.sidebarBrand}>ClassBridge</span>
+          <button
+            type="button"
+            className={styles.sidebarBrandButton}
+            onClick={() => navigate("/")}
+            aria-label="Về trang chủ"
+            title="Về trang chủ"
+          >
+            <span className={styles.sidebarBrand}>ClassBridge</span>
+          </button>
         )}
-        {isCollapsed ? (
-          <Menu size={20} aria-hidden="true" />
-        ) : (
-          <ChevronLeft size={20} aria-hidden="true" />
-        )}
-      </button>
+        <button
+          type="button"
+          className={styles.sidebarCollapseToggle}
+          aria-label={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
+          aria-expanded={!isCollapsed}
+          onClick={() => setIsCollapsed((collapsed) => !collapsed)}
+        >
+          {isCollapsed ? (
+            <Menu size={20} aria-hidden="true" />
+          ) : (
+            <ChevronLeft size={20} aria-hidden="true" />
+          )}
+        </button>
+      </div>
 
       <nav className={styles.navMenu} aria-label="Menu giảng viên">
         {PRIMARY_ITEMS.map(renderItem)}

@@ -6,10 +6,11 @@ from pathlib import PurePath
 from uuid import UUID, uuid4
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from auth_utils import LECTURER_REQUIRED_MESSAGE, LECTURER_ROLE, role_denied, role_required
 from extensions import db
 from routes.giangvien.classroom.classroom import (
     _materialize_existing_recurring_sessions,
@@ -43,8 +44,6 @@ MAX_LECTURE_FILE_SIZE = 20 * 1024 * 1024
 
 
 def _lecturer_id():
-    if get_jwt().get("role") != "giang_vien":
-        return None
     email = get_jwt_identity()
     if not isinstance(email, str):
         return None
@@ -80,7 +79,7 @@ def _class_or_404(class_id, lecturer_id):
 
 
 @lecturer_classes_bp.route("", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def list_lecturer_classes():
     try:
         lecturer_id = _lecturer_id()
@@ -264,6 +263,11 @@ def create_lecturer_class():
                 "message": "Khoảng ngày đã chọn không có ngày học tương ứng với lịch trong tuần."
             }), 400
 
+    # Giữ thứ tự cũ: kiểm tra dữ liệu gửi lên trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
+    if denied:
+        return denied
+
     try:
         lecturer_id = _lecturer_id()
         if not lecturer_id:
@@ -413,6 +417,11 @@ def update_lecturer_class(class_id):
         return jsonify({"message": "Tên môn học là bắt buộc và tối đa 150 ký tự."}), 400
     if not isinstance(description, str):
         return jsonify({"message": "Mô tả lớp học không hợp lệ."}), 400
+    # Giữ thứ tự cũ: kiểm tra dữ liệu gửi lên trước, rồi mới kiểm tra vai trò.
+    denied = role_denied(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
+    if denied:
+        return denied
+
     try:
         lecturer_id = _lecturer_id()
         if not lecturer_id:
@@ -461,7 +470,7 @@ def update_lecturer_class(class_id):
 
 
 @lecturer_classes_bp.route("/<class_id>", methods=["DELETE"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def delete_lecturer_class(class_id):
     try:
         lecturer_id = _lecturer_id()
@@ -493,7 +502,7 @@ def delete_lecturer_class(class_id):
 
 
 @lecturer_classes_bp.route("/<class_id>/sessions", methods=["GET"])
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def list_lecturer_class_sessions(class_id):
     try:
         lecturer_id = _lecturer_id()
@@ -572,7 +581,7 @@ def list_lecturer_class_sessions(class_id):
 @lecturer_classes_bp.route(
     "/<class_id>/sessions/<schedule_id>/upload-slides", methods=["POST"]
 )
-@jwt_required()
+@role_required(LECTURER_ROLE, message=LECTURER_REQUIRED_MESSAGE)
 def upload_lecture_file(class_id, schedule_id):
     try:
         lecturer_id = _lecturer_id()

@@ -36,7 +36,33 @@ _cuda_failed = False  # nhớ lỗi CUDA trong suốt vòng đời tiến trình
 _AI_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _keep_segment(s, max_no_speech: float = 0.68) -> bool:
+VI_INITIAL_PROMPT = (
+    "Nội dung bài giảng bằng tiếng Việt, có thể có giọng Bắc, Trung hoặc Nam. "
+    "Các từ chuyên ngành công nghệ thông tin: deadlock, semaphore, mutex, thread, "
+    "cấu trúc dữ liệu, thuật toán, hệ điều hành, lập trình, kiến trúc hệ thống."
+)
+
+# Hotwords: truyền vào faster-whisper để boost xác suất các từ dễ bị nhầm.
+# Cách hoạt động: Whisper tăng logprob cho token của những từ này trong beam search
+# → model tự output đúng, không cần post-process regex thủ công.
+VI_HOTWORDS = (
+    "độ trễ trước cấu trúc chương trình trực tiếp trọng lực "
+    "xử lý xuất sắc hiệu suất giai đoạn "
+    "dữ liệu lớp học lập trình viên kiến trúc "
+    "deadlock semaphore mutex thread "
+    "hệ thống phân tán cơ sở dữ liệu thuật toán "
+    "triển khai truy xuất giao diện thông lượng"
+)
+
+EN_HOTWORDS = (
+    "deadlock semaphore mutex thread process "
+    "distributed system database algorithm "
+    "latency throughput architecture deployment "
+    "structured query language operating system"
+)
+
+
+def _keep_segment(s, max_no_speech: float = 0.85) -> bool:
     if not (getattr(s, "text", "") or "").strip():
         return False
     nsp = float(getattr(s, "no_speech_prob", 0.0) or 0.0)
@@ -46,9 +72,9 @@ def _keep_segment(s, max_no_speech: float = 0.68) -> bool:
         return False
     if cr > 2.4:
         return False  # chuỗi lặp (temperature=0 không có fallback)
-    if lp < -1.35:
-        return False  # độ tự tin quá thấp -> dễ bịa chữ từ tạp âm
-    if nsp >= 0.50 and lp < -0.95:
+    if lp < -0.78:
+        return False  # chặn dứt điểm tiếng xì xào nền / tạp âm phòng họp có độ tự tin thấp (lp ~ -0.85..-1.50)
+    if nsp >= 0.60 and lp < -0.55:
         return False  # vừa nghi không có tiếng nói vừa logprob thấp
     return True
 
@@ -314,15 +340,13 @@ class WhisperEngine:
         processed: np.ndarray,
         lang: str | None,
         effective_beam: int,
-        max_no_speech: float = 0.70,
+        max_no_speech: float = 0.85,
     ) -> tuple[list, object]:
-        # Không đặt repetition_penalty > 1 hay no_repeat_ngram_size=3 vì câu giảng tự nhiên
-        # thường lặp lại từ nối/chủ ngữ -> phạt lặp làm lệch xác suất âm học giữa câu.
         vad_opts = {
-            "threshold": 0.30,
-            "min_speech_duration_ms": 120,
-            "min_silence_duration_ms": 400,
-            "speech_pad_ms": 450,
+            "threshold": 0.34,
+            "min_speech_duration_ms": 140,
+            "min_silence_duration_ms": 300,
+            "speech_pad_ms": 350,
         }
         segments, info = active_model.transcribe(
             processed,
@@ -331,13 +355,14 @@ class WhisperEngine:
             best_of=1,
             temperature=0.0,
             condition_on_previous_text=False,
-            repetition_penalty=1.0,
-            no_repeat_ngram_size=0,
+            repetition_penalty=1.12,
+            no_repeat_ngram_size=3,
             without_timestamps=True,
-            initial_prompt=None,
+            initial_prompt=VI_INITIAL_PROMPT if lang == "vi" else None,
+            hotwords=VI_HOTWORDS if lang == "vi" else (EN_HOTWORDS if lang == "en" else None),
             compression_ratio_threshold=2.4,
-            log_prob_threshold=-1.35,
-            no_speech_threshold=0.68,
+            log_prob_threshold=-0.78,
+            no_speech_threshold=0.85,
             vad_filter=True,
             vad_parameters=vad_opts,
         )
@@ -354,42 +379,48 @@ class WhisperEngine:
         processed = preprocess_audio_for_stt(audio)
         rms = float(np.sqrt(np.mean(processed * processed)))
         peak = float(np.max(np.abs(processed)))
-        if (rms < 0.005 and peak < 0.018) or is_high_freq_noise(processed):
+        if (rms < 0.006 and peak < 0.020) or is_high_freq_noise(processed):
             return None
 
         lang = language if language in ("vi", "en") else None  # None = tự nhận song ngữ VI/EN
-        effective_beam = max(4, self.beam_size) if self.device == "cuda" else max(1, min(2, self.beam_size))
+        effective_beam = max(5, self.beam_size) if self.device == "cuda" else max(1, min(3, self.beam_size))
         resolved_lang: str | None = lang
         resolved_prob: float = 1.0
 
         with self._lock:
             if lang in ("vi", "en"):
-                active_model = self._ensure_en_model() if lang == "en" else self.model
+                actual_lang = lang
+                # Nếu người dùng đang chọn cố định VI nhưng lại nói hẳn 1 câu tiếng Anh rõ ràng (hoặc ngược lại),
+                # tự động nhận diện để không ép dịch sai âm tiếng Anh sang chữ Việt vô nghĩa
+                if hasattr(self.model, "detect_language"):
+                    try:
+                        _, _, all_probs = self.model.detect_language(processed)
+                        probs_map = dict(all_probs or [])
+                        p_vi = float(probs_map.get("vi", 0.0))
+                        p_en = float(probs_map.get("en", 0.0))
+                        if lang == "vi" and p_en >= 0.80 and p_vi < 0.10:
+                            actual_lang = "en"
+                        elif lang == "en" and p_vi >= 0.80 and p_en < 0.10:
+                            actual_lang = "vi"
+                    except Exception:
+                        pass
+                active_model = self._ensure_en_model() if actual_lang == "en" else self.model
                 if active_model is None:
                     raise RuntimeError("Whisper model is not loaded")
-                kept, info = self._decode_with_model(active_model, processed, lang, effective_beam)
+                kept, info = self._decode_with_model(active_model, processed, actual_lang, effective_beam)
+                resolved_lang = actual_lang
                 resolved_prob = float(getattr(info, "language_probability", 1.0) or 1.0)
             elif hasattr(self.model, "detect_language"):
-                try:
-                    top_lang, top_prob, all_probs = self.model.detect_language(
-                        processed,
-                        vad_filter=True,
-                        vad_parameters={
-                            "threshold": 0.30,
-                            "min_speech_duration_ms": 120,
-                            "min_silence_duration_ms": 400,
-                            "speech_pad_ms": 450,
-                        },
-                    )
-                except TypeError:
-                    top_lang, top_prob, all_probs = self.model.detect_language(processed)
+                # Gọi detect_language trực tiếp trên mảng audio đã qua segmenter (không truyền dict vad_parameters
+                # vì faster-whisper detect_language đòi VadOptions object, truyền dict sẽ văng AttributeError!)
+                top_lang, top_prob, all_probs = self.model.detect_language(processed)
                 probs_map = dict(all_probs or [])
                 p_vi = float(probs_map.get("vi", 0.0))
                 p_en = float(probs_map.get("en", 0.0))
                 bi_sum = p_vi + p_en
 
-                # Chỉ loại bỏ khi chắc chắn là ngôn ngữ thứ 3 (Hàn/Nhật/Trung >= 65%) và VI+EN rất thấp
-                if top_lang not in ("vi", "en") and bi_sum < 0.08 and float(top_prob or 0.0) >= 0.65:
+                # Chỉ loại bỏ khi chắc chắn là ngôn ngữ thứ 3 (Hàn/Nhật/Trung >= 70%) và VI+EN rất thấp
+                if top_lang not in ("vi", "en") and bi_sum < 0.06 and float(top_prob or 0.0) >= 0.70:
                     return None
 
                 primary_lang = "en" if (top_lang == "en" or p_en > p_vi * 1.15) else "vi"
@@ -397,13 +428,13 @@ class WhisperEngine:
                 if primary_model is None:
                     raise RuntimeError("Whisper model is not loaded")
 
-                strict_non_bi = top_lang not in ("vi", "en") and bi_sum < 0.10 and float(top_prob or 0.0) >= 0.50
+                strict_non_bi = top_lang not in ("vi", "en") and bi_sum < 0.08 and float(top_prob or 0.0) >= 0.55
                 kept, info = self._decode_with_model(
                     primary_model,
                     processed,
                     primary_lang,
                     effective_beam,
-                    max_no_speech=0.55 if strict_non_bi else 0.70,
+                    max_no_speech=0.60 if strict_non_bi else 0.85,
                 )
                 avg_lp = (
                     sum(float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in kept) / len(kept)
@@ -412,13 +443,13 @@ class WhisperEngine:
                 )
 
                 en_model_ref = self._ensure_en_model()
-                if abs(p_en - p_vi) < 0.20 and (not kept or avg_lp < -0.95):
+                if abs(p_en - p_vi) < 0.20 and (not kept or avg_lp < -0.78):
                     alt_lang = "vi" if primary_lang == "en" else "en"
                     alt_model = (en_model_ref if en_model_ref is not None else self.model) if alt_lang == "en" else self.model
                     if alt_model is not None:
                         alt_kept, alt_info = self._decode_with_model(
                             alt_model, processed, alt_lang, effective_beam,
-                            max_no_speech=0.55 if strict_non_bi else 0.70,
+                            max_no_speech=0.60 if strict_non_bi else 0.85,
                         )
                         alt_lp = (
                             sum(float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in alt_kept) / len(alt_kept)
@@ -428,7 +459,7 @@ class WhisperEngine:
                         if alt_kept and alt_lp > avg_lp + 0.10:
                             kept, info, primary_lang, avg_lp = alt_kept, alt_info, alt_lang, alt_lp
 
-                if strict_non_bi and avg_lp < -1.0:
+                if strict_non_bi and avg_lp < -1.10:
                     return None
 
                 resolved_lang = primary_lang

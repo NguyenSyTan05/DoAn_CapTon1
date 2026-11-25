@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { NavLink } from "@/lib/router-compat";
+import { NavLink, useNavigate } from "@/lib/router-compat";
 import {
   LuActivity,
   LuBookOpen,
@@ -35,6 +35,7 @@ const NAV_ITEMS = [
 
 export default function AdminSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <aside
@@ -42,23 +43,32 @@ export default function AdminSidebar() {
         isCollapsed ? styles.sidebarCollapsed : ""
       }`}
     >
-      <button
-        type="button"
-        className={styles.sidebarHeaderToggle}
-        aria-label={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
-        aria-expanded={!isCollapsed}
-        title={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
-        onClick={() => setIsCollapsed((collapsed) => !collapsed)}
-      >
+      <div className={styles.sidebarHeaderToggle}>
         {!isCollapsed && (
-          <span className={styles.sidebarBrand}>ClassBridge</span>
+          <button
+            type="button"
+            className={styles.sidebarBrandButton}
+            onClick={() => navigate("/")}
+            aria-label="Về trang chủ"
+            title="Về trang chủ"
+          >
+            <span className={styles.sidebarBrand}>ClassBridge</span>
+          </button>
         )}
-        {isCollapsed ? (
-          <LuMenu size={20} aria-hidden="true" />
-        ) : (
-          <LuChevronLeft size={20} aria-hidden="true" />
-        )}
-      </button>
+        <button
+          type="button"
+          className={styles.sidebarCollapseToggle}
+          aria-label={isCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
+          aria-expanded={!isCollapsed}
+          onClick={() => setIsCollapsed((collapsed) => !collapsed)}
+        >
+          {isCollapsed ? (
+            <LuMenu size={20} aria-hidden="true" />
+          ) : (
+            <LuChevronLeft size={20} aria-hidden="true" />
+          )}
+        </button>
+      </div>
       <nav className={styles.navMenu} aria-label="Menu quản trị">
         {NAV_ITEMS.map(({ label, href, icon: Icon, end }) => (
           <NavLink

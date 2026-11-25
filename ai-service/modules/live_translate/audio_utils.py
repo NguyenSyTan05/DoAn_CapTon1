@@ -114,11 +114,11 @@ def is_high_freq_noise(samples: np.ndarray, sample_rate: int = TARGET_SAMPLE_RAT
 def preprocess_audio_for_stt(
     audio: np.ndarray,
     *,
-    target_rms: float = 0.09,
-    min_speech_rms: float = 0.005,
-    max_gain: float = 4.0,
+    target_rms: float = 0.075,
+    min_speech_rms: float = 0.006,
+    max_gain: float = 2.5,
 ) -> np.ndarray:
-    """Sanitize PCM, strip <80Hz hum/fan noise, and gently normalize speech without boosting silence/noise."""
+    """Sanitize PCM, strip <80Hz hum/fan noise, and gently normalize clear speech without boosting background chatter/noise."""
     arr = np.asarray(audio)
     if arr.size == 0:
         return np.empty(0, dtype=np.float32)
@@ -144,8 +144,9 @@ def preprocess_audio_for_stt(
         samples = np.asarray(sosfilt(_HP_SOS, samples), dtype=np.float64).astype(np.float32)
     rms = float(np.sqrt(np.mean(samples * samples)))
     peak = float(np.max(np.abs(samples)))
-    # Không khuếch đại khoảng lặng hoặc tiếng rít/nhiễu tần số cao
-    if rms >= min_speech_rms and peak >= 0.016 and rms < target_rms and not is_high_freq_noise(samples):
+    # Chỉ khuếch đại nhẹ khi có giọng nói thật rõ ràng (rms >= 0.006, peak >= 0.020),
+    # tuyệt đối không nhân tạp âm nền / tiếng xì xào từ xa trong phòng họp lên 6 lần gây ảo giác chữ sai
+    if rms >= min_speech_rms and peak >= 0.020 and rms < target_rms and not is_high_freq_noise(samples):
         safe_peak_gain = 0.95 / peak if peak > 1e-6 else max_gain
         gain = min(target_rms / rms, max_gain, safe_peak_gain)
         if gain > 1.0:

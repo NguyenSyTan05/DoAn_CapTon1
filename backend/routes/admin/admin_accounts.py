@@ -2,12 +2,12 @@ import re
 from datetime import date
 from uuid import UUID
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
 from account_service import account_email_exists
+from auth_utils import ADMIN_REQUIRED_MESSAGE, ADMIN_ROLE, role_required
 from email_utils import is_valid_email_format
 from extensions import db
 
@@ -46,12 +46,6 @@ SORT_COLUMNS = {
     "role": "account_type",
     "joinedDate": "created_at",
 }
-
-
-def _admin_required():
-    if get_jwt().get("role") != "admin":
-        return jsonify({"message": "Administrator access is required."}), 403
-    return None
 
 
 def _serialize_account(row):
@@ -129,12 +123,8 @@ def _account_row(account_type, account_id):
 
 
 @admin_accounts_bp.route("", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def list_accounts():
-    denied = _admin_required()
-    if denied:
-        return denied
-
     try:
         page = max(1, int(request.args.get("page", "1")))
         page_size = min(500, max(1, int(request.args.get("pageSize", "10"))))
@@ -220,12 +210,8 @@ def list_accounts():
 
 
 @admin_accounts_bp.route("", methods=["POST"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def create_account():
-    denied = _admin_required()
-    if denied:
-        return denied
-
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"message": "Yêu cầu tạo tài khoản không hợp lệ."}), 400
@@ -309,12 +295,8 @@ def create_account():
 
 
 @admin_accounts_bp.route("/<path:account_id>", methods=["PATCH"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def update_account(account_id):
-    denied = _admin_required()
-    if denied:
-        return denied
-
     parsed_id = _parse_account_id(account_id)
     payload = request.get_json(silent=True)
     if parsed_id is None or not isinstance(payload, dict):
@@ -398,11 +380,8 @@ def update_account(account_id):
 
 
 @admin_accounts_bp.route("/<path:account_id>", methods=["DELETE"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def delete_account(account_id):
-    denied = _admin_required()
-    if denied:
-        return denied
     parsed_id = _parse_account_id(account_id)
     if parsed_id is None:
         return jsonify({"message": "Mã tài khoản không hợp lệ."}), 400
@@ -428,11 +407,8 @@ def delete_account(account_id):
 
 
 @admin_accounts_bp.route("/<path:account_id>/activity", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def account_activity(account_id):
-    denied = _admin_required()
-    if denied:
-        return denied
     parsed_id = _parse_account_id(account_id)
     if parsed_id is None:
         return jsonify({"message": "Mã tài khoản không hợp lệ."}), 400

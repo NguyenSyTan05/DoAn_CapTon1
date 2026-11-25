@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import studentService from "../../services/student.service";
-import { aiUrl, aiWsUrl } from "../../lib/ai";
+import { aiFetch, aiWsUrl, isAiAccessStatus } from "../../lib/ai";
 import QAToast from "../../components/room/QAToast/QAToast";
 
 interface QuestionItem {
@@ -91,8 +91,12 @@ export default function StudentClassroom() {
           await studentService.joinSession(sessionId);
           joinedRef.current = true;
         }
-      } catch {
-        /* thử lại ở lượt sau */
+      } catch (err) {
+        // Phiên bị huỷ trong lúc chờ -> báo lỗi; lỗi khác: thử lại ở lượt sau
+        const data = (err as { response?: { data?: { code?: string; message?: string } } }).response?.data;
+        if (!stopped && data?.code === "session_closed") {
+          setLoadError(data.message || "Phiên học đã kết thúc hoặc bị huỷ.");
+        }
       }
     }, 8000);
     return () => {
@@ -141,7 +145,6 @@ export default function StudentClassroom() {
     };
 
     return () => ws.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
@@ -158,7 +161,12 @@ export default function StudentClassroom() {
       });
 
     const handle = (data: any) => {
+      if (data.type === "clear") {
+        setTranscripts([]);
+        return;
+      }
       if (data.type === "history") {
+        setTranscripts([]);
         (data.items ?? []).forEach(handle);
         return;
       }
@@ -188,7 +196,6 @@ export default function StudentClassroom() {
     };
 
     return () => ws.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const handleSendQuestion = async (e: React.FormEvent) => {
@@ -220,15 +227,15 @@ export default function StudentClassroom() {
       // thay vì tự gom cả danh sách từ localStorage rồi POST /aggregate —
       // để câu hỏi từ MỌI thiết bị đều tới được Dashboard giảng viên, không
       // chỉ thiết bị của chính người gửi.
-      const backendUrl = aiUrl("/api/v1/questions");
-
-      const res = await fetch(backendUrl, {
+      const res = await aiFetch("/api/v1/questions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newQuestion),
         signal: controller.signal,
       });
 
+      // Lỗi phiên/quyền (401/403/404/422) đã được aiFetch báo bằng thông báo riêng
+      if (isAiAccessStatus(res.status)) return;
       if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
 
       setQuestionText("");

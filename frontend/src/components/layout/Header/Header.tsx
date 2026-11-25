@@ -28,7 +28,7 @@ export default function Header({roomtitle, thoigiantao}: HeaderProps) {
             <div className={styles.leftHeader}>
                 <div className={styles.logo}>
                     <Image
-                        src="/Logo.png"           
+                        src="/Logo.png"
                         alt="ClassBridge Logo"
                         width={40}
                         height={40}

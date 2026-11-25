@@ -4,10 +4,10 @@ from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from auth_utils import ADMIN_REQUIRED_MESSAGE, ADMIN_ROLE, role_required
 from extensions import db
 
 
@@ -16,19 +16,9 @@ admin_classes_bp = Blueprint(
 )
 
 
-def _admin_required():
-    if get_jwt().get("role") != "admin":
-        return jsonify({"message": "Administrator access is required."}), 403
-    return None
-
-
 @admin_classes_bp.route("", methods=["GET"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def list_classes():
-    denied = _admin_required()
-    if denied:
-        return denied
-
     try:
         page = max(1, int(request.args.get("page", "1")))
         page_size = min(100, max(1, int(request.args.get("pageSize", "7"))))
@@ -311,12 +301,8 @@ def list_classes():
 
 
 @admin_classes_bp.route("", methods=["POST"])
-@jwt_required()
+@role_required(ADMIN_ROLE, message=ADMIN_REQUIRED_MESSAGE)
 def create_class():
-    denied = _admin_required()
-    if denied:
-        return denied
-
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify({"message": "Yêu cầu dữ liệu lớp hợp lệ."}), 400

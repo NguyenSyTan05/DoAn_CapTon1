@@ -3,16 +3,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "@/lib/router-compat";
 import authService from "../../services/auth.service";
+import { clearExpiredSession, getStoredSession, ROLE_HOME } from "@/lib/session";
 import styles from "./login.module.css";
 
 // Giao diện lấy từ /sinhvien; logic đăng nhập dùng API Flask (/auth/login).
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const ROLE_HOME: Record<string, string> = {
-  sinh_vien: "/sinhvien",
-  giang_vien: "/giangvien",
-  admin: "/admin",
-};
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -24,10 +19,18 @@ export default function LoginPage() {
 
   // Bị đẩy về /login?expired=1 khi token hết hạn
   useEffect(() => {
+    // Đã đăng nhập và token còn hạn -> không bắt đăng nhập lại
+    const session = getStoredSession();
+    if (session) {
+      navigate(session.home, { replace: true });
+      return;
+    }
+    clearExpiredSession(); // token cũ đã hết hạn -> dọn localStorage
+
     if (new URLSearchParams(window.location.search).get("expired")) {
       setError("Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.");
     }
-  }, []);
+  }, [navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -46,7 +49,7 @@ export default function LoginPage() {
     try {
       const data = await authService.login(email.trim().toLowerCase(), password);
       const target = ROLE_HOME[data.user?.role];
-      if (target) navigate(target);
+      if (target) navigate(target, { replace: true });
       else setError("Tài khoản không hợp lệ.");
     } catch (err: any) {
       const status = err.response?.status;
