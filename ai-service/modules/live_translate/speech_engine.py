@@ -12,7 +12,7 @@ Nguồn gốc (theo CLAUDE.md):
 - [CUSTOM — điều chỉnh của nhóm]
   * Chọn thiết bị bằng ctranslate2 và KIỂM TRA thật bằng một lần giải mã thử; nếu thiếu
     cuBLAS/cuDNN thì tự lùi về CPU int8 (bản gốc chọn bằng torch.cuda hoặc chỉ bắt lỗi lúc nạp).
-  * Prompt tiếng Việt chỉ dùng khi ép language="vi" (không dùng ở chế độ tự nhận).
+  * Không dùng initial_prompt khi transcribe để tránh Whisper nhại lại prompt lúc im lặng.
   * Cho phép ép ngôn ngữ: bỏ bước nhận diện ngôn ngữ, đo thực tế nhanh ~2 lần trên CPU.
 """
 
@@ -28,16 +28,29 @@ from typing import Protocol
 
 import numpy as np
 
-from modules.live_translate.audio_utils import preprocess_audio_for_stt
+from modules.live_translate.audio_utils import is_high_freq_noise, preprocess_audio_for_stt
 
 logger = logging.getLogger("classbridge.speech_engine")
 
 _cuda_failed = False  # nhớ lỗi CUDA trong suốt vòng đời tiến trình
 _AI_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
-VI_INITIAL_PROMPT = (
-    "Xin chào các bạn, đây là bài giảng đại học bằng tiếng Việt chuẩn có dấu."
-)
+
+def _keep_segment(s, max_no_speech: float = 0.68) -> bool:
+    if not (getattr(s, "text", "") or "").strip():
+        return False
+    nsp = float(getattr(s, "no_speech_prob", 0.0) or 0.0)
+    lp = float(getattr(s, "avg_logprob", 0.0) or 0.0)
+    cr = float(getattr(s, "compression_ratio", 0.0) or 0.0)
+    if nsp >= max_no_speech:
+        return False
+    if cr > 2.4:
+        return False  # chuỗi lặp (temperature=0 không có fallback)
+    if lp < -1.35:
+        return False  # độ tự tin quá thấp -> dễ bịa chữ từ tạp âm
+    if nsp >= 0.50 and lp < -0.95:
+        return False  # vừa nghi không có tiếng nói vừa logprob thấp
+    return True
 
 
 @dataclass
@@ -96,9 +109,10 @@ class WhisperEngine:
         self,
         model_path: str | None = None,
         en_model_path: str | None = None,
-        beam_size: int = 1,
+        beam_size: int = 2,
         device: str = "auto",
     ) -> None:
+        self._explicit_init_path = model_path
         self.model_path = (
             model_path
             or os.getenv("WHISPER_VI_MODEL_PATH")
@@ -124,44 +138,73 @@ class WhisperEngine:
             path = str(raw)
             if not os.path.isabs(path):
                 rel_candidate = _AI_SERVICE_ROOT / path
-                if rel_candidate.is_dir():
+                if rel_candidate.is_dir() and (rel_candidate / "model.bin").is_file():
                     return str(rel_candidate)
-            if os.path.isdir(path):
+            if os.path.isdir(path) and os.path.isfile(os.path.join(path, "model.bin")):
                 return path
         return None
 
     def _resolve_source(self) -> str:
-        # Cho phép cấu hình trực tiếp repo HuggingFace (VD: "Systran/faster-whisper-small") để độ chính xác tiếng Việt cao hơn dưới tiếng ồn
-        if self.model_path and "/" in self.model_path and not os.path.isdir(self.model_path):
+        local_turbo = self._first_existing_dir([
+            _AI_SERVICE_ROOT / "trained_models" / "stt" / "whisper-large-v3-turbo-ct2",
+        ])
+        has_local_turbo = bool(local_turbo and os.path.isfile(os.path.join(local_turbo, "model.bin")))
+
+        # Nếu .env cũ còn lưu đường dẫn model_vi_ct2 (bị lỗi nhãn manifest) trong khi đã có Large-v3-Turbo,
+        # tự động ưu tiên Large-v3-Turbo trừ khi cố ý bật WHISPER_FORCE_LEGACY_CT2=1 hoặc truyền trực tiếp qua code.
+        is_legacy_env_ct2 = (
+            self._explicit_init_path is None
+            and self.model_path is not None
+            and any(k in self.model_path.replace("\\", "/").lower() for k in ("model_vi_ct2", "decoder-micro1"))
+            and os.getenv("WHISPER_FORCE_LEGACY_CT2") != "1"
+        )
+        if has_local_turbo and (self.model_path is None or is_legacy_env_ct2):
+            return str(local_turbo)
+
+        # 1. Nếu người dùng chủ động đặt model_path khác thì tôn trọng
+        explicit = self._first_existing_dir([self.model_path])
+        if explicit:
+            return explicit
+        if self.model_path and "/" in self.model_path:
             try:
                 from huggingface_hub import snapshot_download
 
                 return snapshot_download(self.model_path, local_files_only=True)
             except Exception:
                 pass
-        found = self._first_existing_dir([
-            self.model_path,
-            _AI_SERVICE_ROOT / "trained_models" / "stt" / "model_vi_ct2",
-            _AI_SERVICE_ROOT / "whisper-decoder-micro1-ct2",
-            "d:/TailieuNPKH/classbridge/backend/ai-service/whisper-decoder-micro1-ct2",
-        ])
-        if found:
-            return found
         if self.model_path:
-            logger.warning("WHISPER_MODEL_PATH không tồn tại (%s), dùng model nền.", self.model_path)
-        try:
-            from huggingface_hub import snapshot_download
+            logger.warning("WHISPER_MODEL_PATH không tồn tại (%s), chuyển sang model chuẩn.", self.model_path)
 
-            return snapshot_download("Systran/faster-whisper-small", local_files_only=True)
-        except Exception:
-            return "small"  # faster-whisper sẽ tự tải
+        if has_local_turbo:
+            return str(local_turbo)
+
+        for hf_repo in (
+            "deepdml/faster-whisper-large-v3-turbo-ct2",
+            "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+            "Systran/faster-whisper-small",
+        ):
+            try:
+                from huggingface_hub import snapshot_download
+
+                return snapshot_download(hf_repo, local_files_only=True)
+            except Exception:
+                continue
+
+        local_fallback = self._first_existing_dir([
+            "d:/TailieuNPKH/classbridge/backend/ai-service/.models/hub/models--Systran--faster-whisper-small/snapshots/536b0662742c02347bc0e980a01041f333bce120",
+            _AI_SERVICE_ROOT / "trained_models" / "stt" / "model_vi_ct2",
+        ])
+        if local_fallback:
+            return local_fallback
+        return "deepdml/faster-whisper-large-v3-turbo-ct2"
 
     def _resolve_en_source(self) -> str | None:
-        return self._first_existing_dir([
-            self.en_model_path,
-            _AI_SERVICE_ROOT / "trained_models" / "stt" / "model_en_ct2",
-            "d:/TailieuNPKH/classbridge/training/Module_Train/02_TRAIN_TIENG_ANH/model_en_ct2",
-        ])
+        # Khi model chính đã là Large-v3-Turbo thì dùng chung luôn cho cả tiếng Anh (809M chuẩn hơn hẳn model_en_ct2 74M)
+        if self._vi_source and "large-v3-turbo" in self._vi_source.lower() and os.getenv("WHISPER_FORCE_LEGACY_CT2") != "1":
+            return None
+        if not self.en_model_path:
+            return None
+        return self._first_existing_dir([self.en_model_path])
 
     def _device_candidates(self) -> list[tuple[str, str]]:
         global _cuda_failed
@@ -173,8 +216,10 @@ class WhisperEngine:
                 import ctranslate2
 
                 if ctranslate2.get_cuda_device_count() > 0 and _has_cublas12():
-                    # int8_float16 tốn rất ít VRAM (~350 MB) nhưng chạy nhanh gấp ~10 lần CPU trên RTX 3050
+                    # int8_float16 (~820 MB VRAM cho Large-v3-Turbo) chạy mượt cùng NLLB-200 trên RTX 3050 4GB;
+                    # kèm float16 dự phòng nếu model CT2 không đóng gói int8
                     candidates.append(("cuda", "int8_float16"))
+                    candidates.append(("cuda", "float16"))
             except Exception:
                 pass
         candidates.append(("cpu", "int8"))
@@ -205,16 +250,16 @@ class WhisperEngine:
             except Exception as exc:  # noqa: BLE001
                 del model
                 gc.collect()
-                if device == "cuda":
+                if device == "cuda" and compute_type == "float16":
                     _cuda_failed = True
                 logger.warning("WhisperEngine không dùng được %s/%s cho %s: %s", device, compute_type, source, exc)
         raise RuntimeError(f"Không nạp được model Whisper ({source}) trên bất kỳ thiết bị nào")
 
-    @staticmethod
-    def _enough_free_ram_for_second_model() -> bool:
-        """Nạp model thứ 2 khi RAM gần cạn có thể làm CTranslate2 crash cả tiến trình
-        (đã gặp 'access violation'/'mkl_malloc failed' trên máy 8 GB). Không có psutil thì cho qua."""
-        min_free_mb = int(os.getenv("WHISPER_EN_MIN_FREE_MB", "700"))
+    def _enough_free_ram_for_second_model(self) -> bool:
+        """Nạp model thứ 2 trên CPU khi RAM gần cạn có thể gây mkl_malloc failed trên máy 8 GB.
+        Trên CUDA trọng số nằm trong VRAM (~150 MB) nên chỉ cần ~300 MB RAM đệm lúc đọc file."""
+        default_min = "300" if self.device == "cuda" else "700"
+        min_free_mb = int(os.getenv("WHISPER_EN_MIN_FREE_MB", default_min))
         try:
             import psutil
 
@@ -254,8 +299,50 @@ class WhisperEngine:
         self._vi_source = vi_source
         logger.info("✅ WhisperEngine (VI/Auto): %s (%s/%s)", vi_source, device, compute_type)
 
-        if preload_en or os.getenv("WHISPER_PRELOAD_EN") == "1":
+        # Trên CUDA nạp sẵn luôn model EN (~145 MB VRAM) để chế độ Auto và EN không bị khựng lần đầu
+        should_preload_en = (
+            preload_en
+            or self.device == "cuda"
+            or os.getenv("WHISPER_PRELOAD_EN") == "1"
+        ) and os.getenv("WHISPER_PRELOAD_EN") != "0"
+        if should_preload_en:
             self._ensure_en_model()
+
+    def _decode_with_model(
+        self,
+        active_model,
+        processed: np.ndarray,
+        lang: str | None,
+        effective_beam: int,
+        max_no_speech: float = 0.70,
+    ) -> tuple[list, object]:
+        # Không đặt repetition_penalty > 1 hay no_repeat_ngram_size=3 vì câu giảng tự nhiên
+        # thường lặp lại từ nối/chủ ngữ -> phạt lặp làm lệch xác suất âm học giữa câu.
+        vad_opts = {
+            "threshold": 0.30,
+            "min_speech_duration_ms": 120,
+            "min_silence_duration_ms": 400,
+            "speech_pad_ms": 450,
+        }
+        segments, info = active_model.transcribe(
+            processed,
+            language=lang,
+            beam_size=effective_beam,
+            best_of=1,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            repetition_penalty=1.0,
+            no_repeat_ngram_size=0,
+            without_timestamps=True,
+            initial_prompt=None,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.35,
+            no_speech_threshold=0.68,
+            vad_filter=True,
+            vad_parameters=vad_opts,
+        )
+        kept = [s for s in segments if _keep_segment(s, max_no_speech=max_no_speech)]
+        return kept, info
 
     # ------------------------------------------------------------------
     def transcribe(self, audio: np.ndarray, language: str | None = None) -> SpeechResult | None:
@@ -267,49 +354,112 @@ class WhisperEngine:
         processed = preprocess_audio_for_stt(audio)
         rms = float(np.sqrt(np.mean(processed * processed)))
         peak = float(np.max(np.abs(processed)))
-        if rms < 0.002 and peak < 0.01:
+        if (rms < 0.005 and peak < 0.018) or is_high_freq_noise(processed):
             return None
 
-        lang = language if language in ("vi", "en") else None  # None = tự nhận
+        lang = language if language in ("vi", "en") else None  # None = tự nhận song ngữ VI/EN
+        effective_beam = max(4, self.beam_size) if self.device == "cuda" else max(1, min(2, self.beam_size))
+        resolved_lang: str | None = lang
+        resolved_prob: float = 1.0
 
         with self._lock:
-            active_model = self._ensure_en_model() if lang == "en" else self.model
-            if active_model is None:
-                raise RuntimeError("Whisper model is not loaded")
-            segments, info = active_model.transcribe(
-                processed,
-                language=lang,
-                beam_size=self.beam_size,
-                best_of=self.beam_size,
-                temperature=0.0,
-                condition_on_previous_text=False,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=3,
-                without_timestamps=True,
-                initial_prompt=None,
-                compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.0,
-                no_speech_threshold=0.60,
-                vad_filter=True,
-                vad_parameters={
-                    "threshold": 0.45,
-                    "min_speech_duration_ms": 200,
-                    "min_silence_duration_ms": 350,
-                    "speech_pad_ms": 300,
-                },
-            )
-            kept = [
-                s for s in segments
-                if s.text.strip()
-                and getattr(s, "no_speech_prob", 0.0) < 0.60
-            ]
+            if lang in ("vi", "en"):
+                active_model = self._ensure_en_model() if lang == "en" else self.model
+                if active_model is None:
+                    raise RuntimeError("Whisper model is not loaded")
+                kept, info = self._decode_with_model(active_model, processed, lang, effective_beam)
+                resolved_prob = float(getattr(info, "language_probability", 1.0) or 1.0)
+            elif hasattr(self.model, "detect_language"):
+                try:
+                    top_lang, top_prob, all_probs = self.model.detect_language(
+                        processed,
+                        vad_filter=True,
+                        vad_parameters={
+                            "threshold": 0.30,
+                            "min_speech_duration_ms": 120,
+                            "min_silence_duration_ms": 400,
+                            "speech_pad_ms": 450,
+                        },
+                    )
+                except TypeError:
+                    top_lang, top_prob, all_probs = self.model.detect_language(processed)
+                probs_map = dict(all_probs or [])
+                p_vi = float(probs_map.get("vi", 0.0))
+                p_en = float(probs_map.get("en", 0.0))
+                bi_sum = p_vi + p_en
+
+                # Chỉ loại bỏ khi chắc chắn là ngôn ngữ thứ 3 (Hàn/Nhật/Trung >= 65%) và VI+EN rất thấp
+                if top_lang not in ("vi", "en") and bi_sum < 0.08 and float(top_prob or 0.0) >= 0.65:
+                    return None
+
+                primary_lang = "en" if (top_lang == "en" or p_en > p_vi * 1.15) else "vi"
+                primary_model = self._ensure_en_model() if primary_lang == "en" else self.model
+                if primary_model is None:
+                    raise RuntimeError("Whisper model is not loaded")
+
+                strict_non_bi = top_lang not in ("vi", "en") and bi_sum < 0.10 and float(top_prob or 0.0) >= 0.50
+                kept, info = self._decode_with_model(
+                    primary_model,
+                    processed,
+                    primary_lang,
+                    effective_beam,
+                    max_no_speech=0.55 if strict_non_bi else 0.70,
+                )
+                avg_lp = (
+                    sum(float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in kept) / len(kept)
+                    if kept
+                    else -99.0
+                )
+
+                en_model_ref = self._ensure_en_model()
+                if abs(p_en - p_vi) < 0.20 and (not kept or avg_lp < -0.95):
+                    alt_lang = "vi" if primary_lang == "en" else "en"
+                    alt_model = (en_model_ref if en_model_ref is not None else self.model) if alt_lang == "en" else self.model
+                    if alt_model is not None:
+                        alt_kept, alt_info = self._decode_with_model(
+                            alt_model, processed, alt_lang, effective_beam,
+                            max_no_speech=0.55 if strict_non_bi else 0.70,
+                        )
+                        alt_lp = (
+                            sum(float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in alt_kept) / len(alt_kept)
+                            if alt_kept
+                            else -99.0
+                        )
+                        if alt_kept and alt_lp > avg_lp + 0.10:
+                            kept, info, primary_lang, avg_lp = alt_kept, alt_info, alt_lang, alt_lp
+
+                if strict_non_bi and avg_lp < -1.0:
+                    return None
+
+                resolved_lang = primary_lang
+                resolved_prob = (
+                    (p_en if primary_lang == "en" else p_vi) / bi_sum
+                    if bi_sum > 1e-6
+                    else float(top_prob or 0.0)
+                )
+            else:
+                # Nhánh dự phòng khi dùng mock/engine không có detect_language
+                kept, info = self._decode_with_model(self.model, processed, None, effective_beam)
+                det_lang = getattr(info, "language", None)
+                det_prob = float(getattr(info, "language_probability", 0.0) or 0.0)
+                if kept and det_lang not in ("vi", "en"):
+                    if det_prob < 0.35:
+                        return None
+                    kept, info = self._decode_with_model(
+                        self.model, processed, "vi", effective_beam, max_no_speech=0.45
+                    )
+                    if kept and (sum(float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in kept) / len(kept)) < -0.85:
+                        return None
+                    det_lang = "vi"
+                resolved_lang = det_lang
+                resolved_prob = det_prob
 
         if not kept:
             return None
         return SpeechResult(
             text=" ".join(s.text.strip() for s in kept),
-            language=lang or getattr(info, "language", None),
-            language_prob=float(getattr(info, "language_probability", 0.0) or 0.0),
+            language=resolved_lang or getattr(info, "language", None),
+            language_prob=resolved_prob,
             no_speech_prob=max(float(getattr(s, "no_speech_prob", 0.0)) for s in kept),
             avg_logprob=sum(float(getattr(s, "avg_logprob", 0.0)) for s in kept) / len(kept),
             duration=float(getattr(info, "duration", 0.0) or 0.0),

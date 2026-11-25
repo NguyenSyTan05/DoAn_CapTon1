@@ -171,7 +171,8 @@ class CustomSemanticQuestionAggregator:
     # Input validation [CUSTOM IMPLEMENTATION] — framework-independent
     # ------------------------------------------------------------------
 
-    def parse_and_validate(self, raw_questions: list[dict]) -> list[QuestionRecord]:
+    @classmethod
+    def parse_and_validate(cls, raw_questions: list[dict]) -> list[QuestionRecord]:
         if not isinstance(raw_questions, list):
             raise InvalidQuestionError("Input must be a list of question records.")
 
@@ -201,7 +202,7 @@ class CustomSemanticQuestionAggregator:
                 continue
 
             try:
-                ts = self._parse_timestamp(ts_raw)
+                ts = cls._parse_timestamp(ts_raw)
             except (ValueError, TypeError) as exc:
                 errors.append(f"[index {idx}, id={qid}] malformed timestamp: {ts_raw!r} ({exc})")
                 continue

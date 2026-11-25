@@ -23,9 +23,6 @@ from modules.live_translate.speech_engine import WhisperEngine
 from modules.qa.answer_store import AnswerStore, InMemoryAnswerStore
 from modules.qa.qa_broadcast import QAConnectionManager
 from modules.qa.question_store import InMemoryQuestionStore, QuestionStore
-from modules.question_clustering.semantic_question_aggregator import (
-    CustomSemanticQuestionAggregator,
-)
 from modules.slides.deck_store import MAX_DECKS, SlideDeck
 from modules.slides.slide_store import InMemorySlideEventStore, SlideEventStore
 
@@ -37,7 +34,14 @@ logger = logging.getLogger("classbridge.lifespan")
 async def lifespan(app: FastAPI):
     logger.info("Đang tải toàn bộ mô hình AI lên bộ nhớ...")
     try:
-        # 1. Nạp STT (WhisperEngine) TRƯỚC (~1-2 giây trên CPU) để cổng 8000 sẵn sàng ngay lập tức
+        # 1. Nạp NLLB-200 trên CUDA TRƯỚC khi khởi tạo CTranslate2 WhisperEngine để tránh xung đột context CUDA trên Windows
+        try:
+            await asyncio.to_thread(ai_service.load_models, False)
+            logger.info("✅ NLLB-200 (%s) đã sẵn sàng", ai_service.device)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("⚠️ Không nạp được NLLB-200 (tạm chạy chế độ chỉ STT): %s", exc)
+
+        # 2. Nạp STT (WhisperEngine) trên CUDA
         engine = WhisperEngine()
         await asyncio.to_thread(engine.load)
         app.state.speech_engine = engine
@@ -45,16 +49,16 @@ async def lifespan(app: FastAPI):
         app.state.aggregator = None
         logger.info("✅ STT %s (%s/%s) đã sẵn sàng", engine.name, engine.device, engine.compute_type)
 
-        # 2. Nạp NLLB-200 và MiniLM chạy nền để KHÔNG chặn thời gian khởi động cổng 8000
+        # 3. Nạp MiniLM chạy nền trên CPU để gom cụm câu hỏi
         async def _load_heavy_models_bg() -> None:
             try:
-                await asyncio.to_thread(ai_service.load_models, False)
-                logger.info("✅ NLLB-200 (%s) đã sẵn sàng (nền)", ai_service.device)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("⚠️ Không nạp được NLLB-200 (tạm chạy chế độ chỉ STT): %s", exc)
+                from modules.question_clustering.semantic_question_aggregator import (
+                    CustomSemanticQuestionAggregator,
+                )
 
-            try:
-                agg = await asyncio.to_thread(CustomSemanticQuestionAggregator, translator=ai_service)
+                agg = await asyncio.to_thread(
+                    CustomSemanticQuestionAggregator, device="cpu", translator=ai_service
+                )
                 app.state.aggregator = agg
                 logger.info(
                     "✅ Semantic Question Aggregator đã sẵn sàng (Chiến lược: %s)",

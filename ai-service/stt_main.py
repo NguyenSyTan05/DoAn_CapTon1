@@ -33,6 +33,7 @@ from modules.live_translate.speech_engine import WhisperEngine
 from modules.live_translate.text_filters import (
     decide_language,
     finalize_text,
+    is_decoder_loop,
     is_hallucination,
 )
 
@@ -46,6 +47,8 @@ def _transcribe_chunk(
     started = time.perf_counter()
     result = engine.transcribe(pcm_chunk, language=forced_lang)
     if result is None:
+        return None
+    if is_decoder_loop(result.text):
         return None
 
     text = finalize_text(result.text)

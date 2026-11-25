@@ -34,6 +34,11 @@ router = APIRouter()
 async def aggregate_questions(payload: AggregateRequest, request: Request):
     """Gom cụm câu hỏi song ngữ EN/VI và chọn câu hỏi đại diện cho Giảng viên."""
     aggregator: CustomSemanticQuestionAggregator = request.app.state.aggregator
+    if aggregator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AI đang khởi động, vui lòng thử lại sau vài giây.",
+        )
     raw = [q.model_dump() for q in payload.questions]
 
     try:

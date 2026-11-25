@@ -1,4 +1,5 @@
 import io
+from typing import cast
 
 import numpy as np
 import static_ffmpeg
@@ -11,7 +12,10 @@ from pydub.exceptions import CouldntDecodeError
 try:
     from scipy.signal import butter, sosfilt
 
-    _HP_SOS = butter(4, 90.0, btype="highpass", fs=16_000, output="sos")
+    _HP_SOS: np.ndarray | None = np.asarray(
+        butter(4, 80.0, btype="highpass", fs=16_000, output="sos"),
+        dtype=np.float64,
+    )
 except Exception:
     _HP_SOS = None
     sosfilt = None
@@ -45,11 +49,11 @@ def xuly_am_thanh(file_bytes: bytes) -> np.ndarray:
 
     source = io.BytesIO(file_bytes)
     try:
-        audio = AudioSegment.from_file(source, format="webm")
+        audio = cast(AudioSegment, AudioSegment.from_file(source, format="webm"))
     except CouldntDecodeError:
         source.seek(0)
         try:
-            audio = AudioSegment.from_file(source)
+            audio = cast(AudioSegment, AudioSegment.from_file(source))
         except CouldntDecodeError as exc:
             raise ValueError("Unable to decode audio chunk") from exc
 
@@ -88,25 +92,44 @@ def decode_pcm32(data: bytes) -> np.ndarray:
 
 def load_audio_file(file_path: str) -> np.ndarray:
     """Load an audio file (wav/mp3/webm/m4a/ogg) into 16 kHz mono float32 PCM."""
-    audio = AudioSegment.from_file(file_path)
+    audio = cast(AudioSegment, AudioSegment.from_file(file_path))
     return _segment_to_pcm32(audio)
+
+
+def is_high_freq_noise(samples: np.ndarray, sample_rate: int = TARGET_SAMPLE_RATE) -> bool:
+    """True nếu tín hiệu là nhiễu trắng/tiếng rít thuần túy (năng lượng > 4 kHz cao bất thường
+    đồng thời thiếu năng lượng dải formant giọng người 120–3500 Hz)."""
+    if samples.size < 512:
+        return False
+    spec = np.abs(np.fft.rfft(samples)) ** 2
+    total = float(np.sum(spec))
+    if total <= 1e-12:
+        return True
+    freqs = np.fft.rfftfreq(samples.size, d=1.0 / sample_rate)
+    high_energy = float(np.sum(spec[freqs > 4000.0]))
+    voice_energy = float(np.sum(spec[(freqs >= 120.0) & (freqs <= 3500.0)]))
+    return (high_energy / total) > 0.46 and (voice_energy / total) < 0.45
 
 
 def preprocess_audio_for_stt(
     audio: np.ndarray,
     *,
-    target_rms: float = 0.08,
-    min_speech_rms: float = 0.010,
-    max_gain: float = 3.5,
+    target_rms: float = 0.09,
+    min_speech_rms: float = 0.005,
+    max_gain: float = 4.0,
 ) -> np.ndarray:
-    """Sanitize PCM, strip <90Hz hum/fan noise, and gently normalize speech without boosting silence."""
+    """Sanitize PCM, strip <80Hz hum/fan noise, and gently normalize speech without boosting silence/noise."""
     arr = np.asarray(audio)
     if arr.size == 0:
         return np.empty(0, dtype=np.float32)
     if arr.ndim > 1:
         # (n, channels) hoặc (channels, n): gộp về mono theo trục ngắn hơn
         arr = arr.mean(axis=int(np.argmin(arr.shape)))
-    if np.issubdtype(arr.dtype, np.integer):
+    if np.issubdtype(arr.dtype, np.unsignedinteger):
+        # uint8 (0..255, tâm 128) -> [-1, 1]
+        mid = float(np.iinfo(arr.dtype).max + 1) / 2.0
+        arr = (arr.astype(np.float32) - mid) / mid
+    elif np.issubdtype(arr.dtype, np.integer):
         # int16/int32 thô -> [-1, 1] (nếu không, clip sẽ biến mọi mẫu thành ±1)
         arr = arr.astype(np.float32) / float(np.iinfo(arr.dtype).max + 1)
 
@@ -118,10 +141,11 @@ def preprocess_audio_for_stt(
     )
     samples = samples - float(np.mean(samples))
     if _HP_SOS is not None and sosfilt is not None and samples.size >= 32:
-        samples = np.asarray(sosfilt(_HP_SOS, samples), dtype=np.float32)
+        samples = np.asarray(sosfilt(_HP_SOS, samples), dtype=np.float64).astype(np.float32)
     rms = float(np.sqrt(np.mean(samples * samples)))
-    if rms >= min_speech_rms and rms < target_rms:
-        peak = float(np.max(np.abs(samples)))
+    peak = float(np.max(np.abs(samples)))
+    # Không khuếch đại khoảng lặng hoặc tiếng rít/nhiễu tần số cao
+    if rms >= min_speech_rms and peak >= 0.016 and rms < target_rms and not is_high_freq_noise(samples):
         safe_peak_gain = 0.95 / peak if peak > 1e-6 else max_gain
         gain = min(target_rms / rms, max_gain, safe_peak_gain)
         if gain > 1.0:

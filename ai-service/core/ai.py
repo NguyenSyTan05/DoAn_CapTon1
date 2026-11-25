@@ -14,6 +14,6 @@ gọi STT/MT đi qua cùng một threading.Lock bên trong AiService):
 
 from __future__ import annotations
 
-from modules.live_translate.ai_service import AiService
+from modules.live_translate.tools.ai_service import AiService
 
 ai_service = AiService()

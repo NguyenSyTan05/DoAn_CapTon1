@@ -13,6 +13,10 @@ __pycache__/
 # Bản build / cache
 .next/
 .pytest_cache/
+.cache/
+**/trained_models/**/.cache/
+**/trained_models/**/.gitattributes
+ai-service/transcripts/
 *.log
 
 # Bản sao lưu frontend Vite cũ (nặng, chỉ để đối chiếu cục bộ)

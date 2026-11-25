@@ -18,6 +18,7 @@ import re
 import unicodedata
 
 _WS = re.compile(r"\s+")
+_MATH_OR_DIGIT = re.compile(r"[\d=+\-*/<>^%]")
 # Chỉ đúng các ký tự có dấu của tiếng Việt (NFC). Bản cũ dùng dải [À-ỹ] nên vô tình coi cả
 # chữ Hy Lạp, Do Thái, Ấn Độ, ñ, ü, ç... là "tiếng Việt".
 _VI_DIACRITICS = re.compile(
@@ -43,41 +44,72 @@ _FOREIGN_SCRIPTS = re.compile(
 )
 
 # Ký tự rác Latin-1 / mojibake không bao giờ có trong tiếng Anh hoặc tiếng Việt
-_GARBAGE_LATIN = re.compile(r"[þÞßæÆøØñÑåÅäÄöÖüÜïÏëËîÎðÐ×÷\ufffd]")
+_GARBAGE_LATIN = re.compile(r"[þÞßæÆøØñÑåÅäÄöÖüÜïÏëËîÎðÐ×÷¿¡\ufffd]")
 
-# Câu rác do phụ đề YouTube / nhạc nền: luôn chặn
-_ARTIFACTS = (
-    "subscribe", "la la school", "like and share", "like and subscribe", "dang ky kenh",
-    "đăng ký kênh", "hen gap lai", "hẹn gặp lại", "chia se video", "subtitles by",
-    "để không bỏ lỡ", "bấm chuông", "amara.org",
-    "ghiền mì gõ", "fap tv", "storm meeting done",
-)
-
-# Câu tiếng Anh "học vẹt" Whisper bịa ra từ tiếng thở/nhiễu. Khi giảng viên ép lang="vi" thì
-# chặn tuyệt đối (theo unified_speech_recognizer.py); ở chế độ khác chỉ chặn khi độ tin cậy thấp.
-_EN_PARROT_PHRASES = {
-    "thank you", "thanks", "thanks for watching", "thank you for watching", "bye", "bye bye",
-    "bye now", "goodbye", "you", "you know", "i'm not", "i am not", "i see the light",
-    "i'm coming", "i am coming", "i'm cold", "i'm single", "i know", "that is so", "big way",
-    "big big way", "welcome back", "see you next time", "see you later", "the end",
-    "storm meeting done",
-}
-
-# Câu ngắn Whisper hay bịa khi im lặng nhưng CŨNG có thể là lời thật ("ok các em", "yes",
-# "dạ"): chỉ chặn khi độ tin cậy thấp, kể cả ở chế độ lang="vi".
-_SILENCE_PHRASES = _EN_PARROT_PHRASES | {
-    "yeah", "yes", "no", "ok", "okay", "all right", "alright", "hey", "so",
-    "cảm ơn", "cảm ơn các bạn", "cảm ơn đã xem", "cam on", "vâng", "dạ",
-}
-
-# Ảo giác tiếng Latin/Romance ngoại lai khi để chế độ auto
-_ROMANCE_LEAK = re.compile(
-    r"\b(non\s+è|della|delle|nostra|nostro|allora|ematina|cabe\s+aí|vamos\s+a|jij\s+bent\s+het)\b",
+# Nhãn âm thanh nền Whisper hay tự chèn khi có nhạc/tạp âm/im lặng
+_SOUND_TAGS = re.compile(
+    r"[\[(]\s*(?:music|applause|laughter|silence|cheering|coughing|sigh|noise|inaudible|"
+    r"âm nhạc|nhạc|vỗ tay|tiếng vỗ tay|cười|tiếng cười|im lặng|nhiễu|ho|thở dài)[^\]\)]*[\])]"
+    r"|[♪♫]+",
     re.IGNORECASE,
 )
 
-NO_SPEECH_LIMIT = 0.4   # trên mức này coi câu ngắn là ảo giác
-LOGPROB_LIMIT = -1.0    # dưới mức này coi câu ngắn là ảo giác
+# Câu rác cố định do phụ đề YouTube / nhạc nền / nhại prompt khi im lặng: luôn chặn
+_ARTIFACTS = (
+    "subscribe", "la la school", "like and share", "like and subscribe", "dang ky kenh",
+    "đăng ký kênh", "hãy đăng ký kênh", "đừng quên đăng ký", "hen gap lai", "hẹn gặp lại",
+    "chia se video", "subtitles by", "captioned by", "transcribed by", "translated by",
+    "để không bỏ lỡ", "bấm chuông", "nhấn chuông", "amara.org", "đón xem video", "xem video này",
+    "video tiếp theo", "kênh youtube", "phụ đề được thực hiện bởi", "người dịch", "biên tập viên",
+    "cảm ơn các bạn đã đón xem", "cảm ơn các bạn đã xem", "cảm ơn các bạn đã theo dõi",
+    "cám ơn các bạn đã theo dõi", "cảm ơn các bạn đã lắng nghe", "cảm ơn quý vị và các bạn",
+    "cảm ơn mọi người đã xem", "cám ơn các bạn, tạm biệt", "cảm ơn các bạn, tạm biệt",
+    "xin chào và hẹn gặp lại", "xin chào tạm biệt", "chào tạm biệt", "tạm biệt các bạn",
+    "bye bye, tạm biệt", "bài giảng đại học bằng tiếng việt", "ghiền mì gõ", "fap tv",
+    "storm meeting done", "thank you for listening", "thanks for listening",
+    "subscribe to my channel", "please subscribe", "don't forget to subscribe",
+    "see you in the next video", "mbc news", "sbs news", "kbs news",
+)
+
+# Mẫu câu cố định / câu "học vẹt" Whisper hay tự bịa khi không nói (im lặng, tiếng thở, tạp âm):
+# Chặn TUYỆT ĐỐI nếu cả câu chỉ khớp đúng mẫu này (không phụ thuộc no_speech_prob/avg_logprob).
+# Câu giảng thật dài hơn (VD: "Cảm ơn em đã hỏi về deadlock") vẫn được giữ nguyên.
+_BLOCKED_STANDALONE_PHRASES = {
+    "thank you", "thanks", "thank you so much", "thank you very much", "thanks a lot",
+    "thanks for watching", "thank you for watching", "thank you for listening",
+    "thanks for listening", "bye", "bye bye", "bye now", "goodbye", "bye guys", "bye son",
+    "you", "you know", "i'm not", "i am not", "i see the light", "i'm coming", "i am coming",
+    "i'm cold", "i'm single", "i know", "that is so", "big way", "big big way",
+    "welcome back", "see you next time", "see you later", "the end", "storm meeting done",
+    "music", "silence", "applause", "laughter", "watching", "subtitles",
+    "uh", "um", "hmm", "hm", "oh", "ah", "so", "hey",
+    "cảm ơn", "cám ơn", "cam on", "cảm ơn các bạn", "cám ơn các bạn", "cam on cac ban",
+    "cảm ơn các bạn rất nhiều", "cám ơn các bạn rất nhiều", "rất cảm ơn các bạn",
+    "rất cám ơn các bạn", "cảm ơn mọi người", "cám ơn mọi người",
+    "cảm ơn mọi người đã lắng nghe", "cám ơn mọi người đã lắng nghe",
+    "cảm ơn quý vị", "cảm ơn đã xem", "cảm ơn đã lắng nghe",
+    "cảm ơn bạn", "cám ơn bạn", "cảm ơn nhé", "cám ơn nhé", "cảm ơn ạ", "cám ơn ạ",
+    "cảm ơn nhiều", "cám ơn nhiều",
+    "tạm biệt", "tam biet", "tạm biệt các bạn", "xin chào", "xin chao",
+    "xin chào các bạn", "xin chào tất cả các bạn", "chào các bạn",
+}
+
+# Từ phản hồi siêu ngắn có thể là lời thật ("ok", "yes", "dạ", "vâng"):
+# chỉ chặn khi độ tin cậy thấp.
+_SILENCE_PHRASES = {
+    "yeah", "yes", "no", "ok", "okay", "all right", "alright", "vâng", "dạ",
+}
+
+# Ảo giác tiếng Latin/Romance ngoại lai (Bồ Đào Nha, Pháp, Tây Ban Nha, Ý, Indonesia...)
+_ROMANCE_LEAK = re.compile(
+    r"\b(non\s+è|della|delle|nostra|nostro|allora|ematina|cabe\s+aí|vamos\s+a|jij\s+bent\s+het|"
+    r"atenção|o\s+que\s+é|isso\s+aí|tá\s+pra|acertar\s+com|polícia|c'est|c'était|à\s+la\s+salle|"
+    r"nouvelle-paris|la\s+gente|no\s+lo\s+digan|sampai\s+jumpa|qu'est-ce|não|você|está|estão)\b",
+    re.IGNORECASE,
+)
+
+NO_SPEECH_LIMIT = 0.30  # trên mức này coi câu ngắn/mẫu cố định là ảo giác
+LOGPROB_LIMIT = -0.75   # dưới mức này coi câu ngắn/mẫu cố định là ảo giác
 
 
 def normalize_text(text: str) -> str:
@@ -85,14 +117,26 @@ def normalize_text(text: str) -> str:
 
 
 def clean_transcript_text(text: str) -> str:
-    """NFC, dọn khoảng trắng quanh dấu câu, viết hoa đầu câu. Không đổi từ nào người nói."""
-    s = normalize_text(text)
+    """NFC, bỏ nhãn tạp âm [Music]/♪, dọn dấu câu lỗi/mồ côi, viết hoa đầu câu (giữ Node.js, URL, 10:30)."""
+    s = _SOUND_TAGS.sub(" ", text or "")
+    s = normalize_text(s)
     if not s:
         return ""
+    # Dọn khoảng trắng thừa trước dấu câu và gộp dấu câu lặp/lỗi (",.", "..", "??")
     s = re.sub(r"\s+([,\.!\?:;])", r"\1", s)
-    s = re.sub(r"([,\.!\?:;])([^\s0-9])", r"\1 \2", s)
+    s = re.sub(r"([,\.!\?:;])\1+", r"\1", s)
+    s = re.sub(r",\s*([.!?])", r"\1", s)
+    # Chèn khoảng trắng sau dấu câu nhưng bảo toàn tên file/domain (Node.js, main.py), số thập phân (3.14), URL/giờ (10:30, http://)
+    s = re.sub(r"([,!\?;])([^\s0-9])", r"\1 \2", s)
+    s = re.sub(r"(?<!\w)\.([^\s0-9\.])", r". \1", s)
+    s = re.sub(r"([:\.])(?=\s*[A-ZÀ-Ỹ])", r"\1 ", s)
+    # Xoá dấu câu mồ côi ở đầu chuỗi
+    s = re.sub(r"^[,.;:!?\-–—\s]+", "", s)
     s = _WS.sub(" ", s).strip()
-    s = re.sub(r"(^|[.!?]\s+)([^\W\d_])", lambda m: m.group(1) + m.group(2).upper(), s, flags=re.UNICODE)
+    if not s:
+        return ""
+    if not re.match(r"^(?:https?://|www\.)", s, re.IGNORECASE):
+        s = re.sub(r"(^|[.!?]\s+)([^\W\d_])", lambda m: m.group(1) + m.group(2).upper(), s, flags=re.UNICODE)
     return s
 
 
@@ -135,11 +179,22 @@ def remove_repeated_phrases(text: str) -> str:
     return re.sub(r",\s*$", "", current).strip()
 
 
-def _has_vietnamese_signal(text: str) -> bool:
-    if _VI_DIACRITICS.search(text):
-        return True
-    words = set(re.findall(r"[a-z]+", text.lower()))
-    return bool(words & _VI_UNACCENTED)
+def is_decoder_loop(text: str) -> bool:
+    """Vòng lặp decoder (nguồn chính của 'tự nhảy chữ' khi im lặng/ồn): 1 từ lặp >= 4 lần liên tiếp
+    hoặc cụm 2–6 từ lặp >= 3 lần liên tiếp. Bỏ dấu câu nên 'Hello, hello, hello, hello!' vẫn bắt được.
+    Từ láy 2 lần ('luôn luôn', 'từ từ') không bị ảnh hưởng."""
+    tokens = [t for t in (_tok(x) for x in re.findall(r"\S+", normalize_text(text))) if t]
+    n = len(tokens)
+    for plen in range(1, 7):
+        need = 4 if plen == 1 else 3
+        span = plen * need
+        if span > n:
+            break
+        for i in range(n - span + 1):
+            phrase = tokens[i:i + plen]
+            if all(tokens[i + k * plen:i + (k + 1) * plen] == phrase for k in range(1, need)):
+                return True
+    return False
 
 
 def is_hallucination(
@@ -166,38 +221,71 @@ def is_hallucination(
     if re.search(r"([^\W\d_])\1{4,}", normalized, flags=re.UNICODE):
         return True
     words = normalized.split()
+    # Chặn chuỗi cảm thán 1 âm tiết rác do tiếng thở/nhiễu (VD: "Ú, ơ.", "Ý, ạ.", "Ú, ú.")
+    alpha_words = re.findall(r"[^\W\d_]+", normalized, flags=re.UNICODE)
+    if alpha_words and all(len(w) <= 1 for w in alpha_words) and not _MATH_OR_DIGIT.search(normalized):
+        return True
     if len(words) >= 5:
         unique = set(words)
         if len(unique) / len(words) < 0.35 or len(unique) <= 2:
             return True
 
-    has_vi = _has_vietnamese_signal(normalized)
+    has_vi_specific = bool(_VI_SPECIFIC.search(normalized))
     # Whisper hay dùng nháy cong (’) — đổi về nháy thẳng trước khi so khớp cụm câu
     bare = _WS.sub(" ", re.sub(r"[^\w\s']", "", normalized.replace("\u2019", "'"))).strip()
 
-    if forced_lang is None:
-        if _ROMANCE_LEAK.search(normalized) and not _VI_SPECIFIC.search(normalized):
-            return True
-        if detected_lang not in (None, "en", "vi") and not has_vi:
-            return True
-
-    if forced_lang == "vi" and not has_vi and bare in _EN_PARROT_PHRASES:
+    # Chặn tuyệt đối mọi mẫu câu cố định / câu học vẹt khi xuất hiện đứng riêng
+    if bare in _BLOCKED_STANDALONE_PHRASES:
         return True
+
+    # Luôn chặn câu ngoại lai Romance/Latin nếu không chứa dấu đặc trưng riêng của tiếng Việt
+    if _ROMANCE_LEAK.search(normalized) and not has_vi_specific:
+        return True
+
+    if forced_lang is None:
+        # Nếu Whisper phát hiện ngôn ngữ khác EN/VI (VD: pt, fr, es, id...) mà không có dấu riêng tiếng Việt thì chặn
+        if detected_lang not in (None, "en", "vi") and not has_vi_specific:
+            return True
 
     if bare in _SILENCE_PHRASES:
         return no_speech_prob > NO_SPEECH_LIMIT or avg_logprob < LOGPROB_LIMIT
     return False
 
 
+_EN_STOPWORDS = {
+    "the", "is", "are", "was", "were", "what", "whats", "how", "why", "when", "where",
+    "who", "this", "that", "these", "those", "you", "your", "we", "our", "they", "their",
+    "hello", "today", "will", "can", "could", "would", "should", "have", "has", "had",
+    "with", "from", "about", "let", "lets", "for", "and", "not", "but", "into", "whole",
+}
+
+
+def _strip_accents(s: str) -> str:
+    nfd = unicodedata.normalize("NFD", s)
+    stripped = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
+    return stripped.replace("đ", "d").replace("Đ", "D")
+
+
 def decide_language(text: str, whisper_lang: str | None = None, whisper_prob: float = 0.0) -> str:
-    """Trả về "vi" hoặc "en". Ưu tiên dấu tiếng Việt trong chữ; sau đó tin Whisper khi nó báo
-    en/vi; cuối cùng mới dùng từ Việt không dấu."""
+    """Trả về "vi" hoặc "en". Ưu tiên dấu đặc trưng tiếng Việt; kiểm tra từ vựng khi câu không dấu."""
+    del whisper_prob
+    if _VI_SPECIFIC.search(text or ""):
+        return "vi"
     if _VI_DIACRITICS.search(text or ""):
+        if whisper_lang == "en":
+            words = set(re.findall(r"[a-z]+", _strip_accents(text or "").lower()))
+            return "vi" if words & _VI_UNACCENTED else "en"
+        return "vi"
+    words = set(re.findall(r"[a-z]+", (text or "").replace("’", "'").replace("'", "").lower()))
+    has_vi = bool(words & _VI_UNACCENTED)
+    has_en = bool(words & _EN_STOPWORDS)
+    if has_en and not has_vi:
+        return "en"
+    if has_vi and not has_en:
         return "vi"
     if whisper_lang in ("en", "vi"):
         return whisper_lang
-    words = set(re.findall(r"[a-z]+", (text or "").lower()))
-    return "vi" if words & _VI_UNACCENTED else "en"
+    return "vi" if has_vi else "en"
 
 
 def finalize_text(text: str) -> str:

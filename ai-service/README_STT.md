@@ -69,3 +69,30 @@ Tài liệu này ghi lại rõ **file/model gốc của bạn**, **file mới th
 cd D:\DemoMidTerm-master\DemoMidTerm-master\ai-service
 .\.venv\Scripts\python.exe stt_main.py --audio path\to\audio.wav --lang auto
 ```
+
+---
+
+## 6. Rà soát lần 3 (chống tự nhảy chữ)
+
+Chi tiết toàn bộ rà soát, rủi ro, các mục chưa sửa và file thừa xem tại [GHI_CHU_RA_SOAT.md](../GHI_CHU_RA_SOAT.md).
+
+| File | Nội dung tối ưu / sửa lỗi |
+|---|---|
+| `modules/live_translate/text_filters.py` | Thêm `is_decoder_loop()` chặn vòng lặp decoder trên văn bản thô trước khi khử lặp; giữ biểu thức toán/số (`x = 5`, `a + b = c`); sửa `decide_language()` dùng `_strip_accents()` để không nhận nhầm từ vay mượn (`café`, `naïve`) thành tiếng Việt |
+| `modules/live_translate/speech_engine.py` | Thêm `_keep_segment()` chặn `compression_ratio > 2.4` và mẫu ảo giác `(avg_logprob < -1.0, no_speech_prob > 0.35)`; siết nhánh re-decode `vi` (`max_no_speech=0.40`, bỏ nếu `avg_logprob < -0.8`, đồng bộ `effective_beam`); làm rõ ghi chú cố ý không dùng `VI_INITIAL_PROMPT` |
+| `modules/live_translate/router.py` & `stt_main.py` | Gọi `is_decoder_loop()` trước `finalize_text()`; bỏ vòng chờ NLLB 15s; thêm `order_lock` giữ thứ tự FIFO cho bản dịch/`history`; dùng `queue.put()` trong `finally` tránh mất câu cuối |
+| `modules/live_translate/ai_service.py` | Chuyển `detect_language()` sang dùng chung `text_filters.decide_language()` |
+| `frontend/public/pcm-processor.js` & `frontend/src/app/room/page.tsx` | Nâng cấp downsample sang bộ lọc thông thấp Butterworth bậc 4 + nội suy tuyến tính giữ trạng thái liên khối; ưu tiên `AudioContext({ sampleRate: 16000 })`, gọi `ctx.resume()` và dọn mic/AudioContext khi lỗi |
+| `modules/live_translate/test_stt_pipeline.py` | Thêm 8 unit test cho pipeline STT & giải mã PCM; kiểm tra thực tế trên `model_vi_ct2` (21/21 mẫu im lặng/nhiễu/tiếng ù = 0 ảo giác) |
+
+---
+
+## 7. Rà soát lần 4 (tăng tốc thời gian thực, bắt trọn câu & sửa chế độ Auto song ngữ)
+
+| File | Nguyên nhân cũ | Đã tối ưu |
+|---|---|---|
+| `frontend/src/app/room/page.tsx` | `autoGainControl: false` làm tín hiệu micro laptop nhỏ, khiến segmenter cắt vụn câu thành đoạn `1.1s` | Bật lại `autoGainControl: true` kết hợp `noiseSuppression` & `echoCancellation` |
+| `modules/live_translate/segmenter.py` | `max_utterance_s=8.0` + chờ lặng `500–600ms` gây trễ cao; ngưỡng duy trì `0.011` quá cao làm ngắt giữa câu | Giảm `max_utterance_s=4.5s`, chờ lặng `400ms`, thêm `pre_roll=400ms`, lọc thông cao bậc 4 `110 Hz` + hysteresis duy trì `0.006` |
+| `modules/live_translate/audio_utils.py` | `is_high_freq_noise > 0.45` loại nhầm âm xuýt (`s/x/ch/th`); ngưỡng khuếch đại `0.012` bỏ sót giọng nói nhỏ | Chỉ coi là nhiễu rít khi thiếu năng lượng formant `120–3500 Hz`; chuẩn hóa giọng nhỏ từ `rms >= 0.005` (`max_gain=4.0`) |
+| `modules/live_translate/speech_engine.py` | `beam_size=5` chậm; chế độ `auto` dùng `model_vi_ct2` đọc tiếng Anh và bỏ câu có `det_prob < 0.48`; `no_speech < 0.45` & `logprob < -1.0` loại nhầm câu thật | Đưa `beam_size=2` trên CUDA; nạp sẵn cả `model_vi_ct2` + `model_en_ct2` lên VRAM; ở chế độ `auto` dùng `detect_language()` so sánh xác suất `vi` vs `en` để định tuyến thẳng sang đúng model chuyên biệt |
+| `modules/live_translate/router.py` | `MAX_QUEUE = 2` làm rớt câu khi giảng viên nói nhiều mệnh đề liên tiếp | Nâng `MAX_QUEUE = 8` theo đúng thiết kế kiến trúc ClassBridge |

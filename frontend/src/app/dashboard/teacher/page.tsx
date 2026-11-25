@@ -336,7 +336,8 @@ export default function TeacherDashboard() {
   useEffect(() => {
     const saved = localStorage.getItem("dashboard_language");
     if (saved === "en" || saved === "vi") {
-      setLanguage(saved);
+      const timer = window.setTimeout(() => setLanguage(saved), 0);
+      return () => window.clearTimeout(timer);
     }
   }, []);
 
@@ -505,10 +506,14 @@ export default function TeacherDashboard() {
       setData(result);
       await fetchAnswers();
       await fetchSlideEngagement();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Aggregation API error:", error);
 
-      setErrorMessage(error.message || "Unable to connect to the AI backend.");
+      setErrorMessage(
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to connect to the AI backend.",
+      );
     } finally {
       setLoading(false);
     }
@@ -519,16 +524,31 @@ export default function TeacherDashboard() {
   ========================================================= */
 
   useEffect(() => {
-    const role = localStorage.getItem("user_role") || "teacher";
+    let role: string | undefined;
+    try {
+      const stored = JSON.parse(localStorage.getItem("user") || "null");
+      role = typeof stored?.role === "string" ? stored.role : undefined;
+    } catch {
+      role = undefined;
+    }
+    const token = localStorage.getItem("token");
 
-    if (role !== "teacher") {
+    if (!token || !role) {
+      router.push("/login");
+      return;
+    }
+
+    if (!["giang_vien", "lecturer", "teacher"].includes(role)) {
       alert(t.onlyTeacherAlert);
       router.push("/");
       return;
     }
 
-    setIsAuthorized(true);
-    fetchClusters();
+    const timer = window.setTimeout(() => {
+      setIsAuthorized(true);
+      void fetchClusters();
+    }, 0);
+    return () => window.clearTimeout(timer);
     // t.onlyTeacherAlert cố tình không đưa vào deps — effect này chỉ nên
     // chạy 1 lần lúc mount, không nên chạy lại mỗi khi đổi ngôn ngữ.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -948,8 +968,8 @@ export default function TeacherDashboard() {
                   >
                     <div
                       className={styles.clusterHeader}
-                      onClick={(e) =>{
-                       setExpandedClusterId(isExpanded ? null : cluster.cluster_id)
+                      onClick={() => {
+                        setExpandedClusterId(isExpanded ? null : cluster.cluster_id);
                       }}
                     >
                       <div className={styles.rank}>#{index + 1}</div>

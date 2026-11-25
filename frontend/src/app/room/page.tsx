@@ -62,17 +62,20 @@ export default function AIClassroomPage() {
   // đè "room_questions" trong localStorage (setItem, không phải append).
   // Load lại từ localStorage ngay khi mount để tránh ghi đè nhầm.
   useEffect(() => {
-    setSessionId(currentSession());
-    setRole(isStudentRole(authService.getCurrentUser()?.role) ? 'student' : 'lecturer');
-    setUserName(authService.getCurrentUser()?.full_name ?? '');
-    try {
-      const saved = localStorage.getItem("room_questions");
-      if (saved) {
-        setQuestions(JSON.parse(saved));
+    const timer = window.setTimeout(() => {
+      setSessionId(currentSession());
+      setRole(isStudentRole(authService.getCurrentUser()?.role) ? 'student' : 'lecturer');
+      setUserName(authService.getCurrentUser()?.full_name ?? '');
+      try {
+        const saved = localStorage.getItem("room_questions");
+        if (saved) {
+          setQuestions(JSON.parse(saved));
+        }
+      } catch (error) {
+        console.error("Cannot load room questions:", error);
       }
-    } catch (error) {
-      console.error("Cannot load room questions:", error);
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const [enTrans, setEnTrans] = useState<TranScript[]>([]);
@@ -130,22 +133,28 @@ export default function AIClassroomPage() {
   useEffect(() => {
     let isSubscribed = true;
     let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const base = process.env.NEXT_PUBLIC_WS_URL; // tương thích cấu hình cũ (đã gồm đường dẫn đầy đủ)
     const asStudent = isStudentRole(authService.getCurrentUser()?.role);
-    // Sinh viên chỉ nhận phụ đề (viewer); giảng viên gửi PCM 16 kHz
-    const params = asStudent
-      ? { role: "viewer", progressive: 1 }
-      : { role: "lecturer", fmt: "pcm32", progressive: 1, lang: speechLangRef.current };
 
-    const connectTimer = setTimeout(() => {
+    const connect = () => {
       if (!isSubscribed) return;
+      // Sinh viên chỉ nhận phụ đề (viewer); giảng viên gửi PCM 16 kHz
+      const params = asStudent
+        ? { role: "viewer", progressive: 1 }
+        : { role: "lecturer", fmt: "pcm32", progressive: 1, lang: speechLangRef.current };
       const url = base
         ? `${base}${base.includes('?') ? '&' : '?'}${new URLSearchParams({ ...(currentSession() ? { session: currentSession()! } : {}), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) })}`
         : aiWsUrl("/api/v1/ws/live-translate", params);
       ws = new WebSocket(url);
 
       ws.onopen = () => {
-        if (isSubscribed) console.log("🟢 WebSocket Connected");
+        if (isSubscribed) {
+          console.log("🟢 WebSocket Connected");
+          if (!asStudent && ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ action: "set_language", language: speechLangRef.current }));
+          }
+        }
       };
 
       ws.onmessage = (event) => {
@@ -157,12 +166,20 @@ export default function AIClassroomPage() {
         }
       };
 
+      ws.onclose = () => {
+        if (!isSubscribed) return;
+        reconnectTimer = setTimeout(connect, 1500);
+      };
+
       wsRef.current = ws;
-    }, 0);
+    };
+
+    const connectTimer = setTimeout(connect, 0);
 
     return () => {
       isSubscribed = false;
       clearTimeout(connectTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       stopRecording();
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
@@ -173,13 +190,34 @@ export default function AIClassroomPage() {
 
   const startRecording = async (): Promise<boolean> => {
     if (isRecordingRef.current) return true;
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      // Tắt noiseSuppression & echoCancellation của trình duyệt vì thuật toán lọc ồn WebRTC
+      // hay cắt mất dải tần 4–8 kHz của phụ âm đầu tiếng Việt (Ch/Tr/Kh/S/Th -> T/H),
+      // trong khi phòng học không phát loa đàm thoại 2 chiều và backend đã có lọc thông cao + Silero VAD.
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+          sampleRate: { ideal: 16000 },
+        },
       });
-      const ctx = new AudioContext();
+      let source: MediaStreamAudioSourceNode;
+      try {
+        ctx = new AudioContext({ sampleRate: 16000 });
+        source = ctx.createMediaStreamSource(stream);
+      } catch {
+        ctx?.close().catch(() => {});
+        ctx = new AudioContext();
+        source = ctx.createMediaStreamSource(stream);
+      }
       await ctx.audioWorklet.addModule("/pcm-processor.js");
-      const source = ctx.createMediaStreamSource(stream);
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
       const node = new AudioWorkletNode(ctx, "pcm-processor");
       node.port.onmessage = (event) => {
         if (event.data?.type === "pcm_data" && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -199,6 +237,8 @@ export default function AIClassroomPage() {
       isRecordingRef.current = true;
       return true;
     } catch (err) {
+      stream?.getTracks().forEach((track) => track.stop());
+      ctx?.close().catch(() => {});
       console.error("Lỗi Mic:", err);
       alert("Không bật được micro. Hãy cho phép trình duyệt dùng micro (biểu tượng ổ khóa cạnh địa chỉ) rồi thử lại.");
       return false;

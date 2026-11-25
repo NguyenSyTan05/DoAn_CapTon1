@@ -1,4 +1,5 @@
 
+import os
 from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request
@@ -71,4 +72,4 @@ def home():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.getenv("FLASK_DEBUG", "0") == "1")

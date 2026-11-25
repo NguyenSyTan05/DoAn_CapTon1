@@ -187,9 +187,12 @@ def _serialize_lecture_material(row):
         ),
         "previewUrl": (
             f"/auth/lecturer/sessions/{row['fileId']}/materials/preview"
-            if extension == "pdf"
-            and row["storageType"] == "BYTEA"
-            else None
+            if extension == "pdf" and row["storageType"] == "BYTEA"
+            else (
+                row["fileUrl"]
+                if extension == "pdf" and row["storageType"] == "URL" and row["fileUrl"]
+                else None
+            )
         ),
     }
 

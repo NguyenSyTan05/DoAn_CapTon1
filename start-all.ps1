@@ -31,6 +31,7 @@ function Get-PortPids([int]$Port) {
 function Stop-PortProcess([int]$Port) {
     $pids = Get-PortPids $Port
     foreach ($procId in $pids) {
+        taskkill /F /T /PID $procId 2>$null | Out-Null
         Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
     }
 }
@@ -47,17 +48,18 @@ if ($flaskPids.Count -gt 0) {
     Write-Host "      -> Started Flask Backend at http://127.0.0.1:5000" -ForegroundColor Green
 }
 
-# 2. Start FastAPI AI Service (:8000) if not already listening
+# 2. Always restart FastAPI AI Service (:8000) with the GPU-enabled Python environment
 $aiPids = Get-PortPids 8000
 if ($aiPids.Count -gt 0) {
-    Write-Host "[2/3] FastAPI AI Service (Port 8000) -> RUNNING (http://127.0.0.1:8000)" -ForegroundColor Green
-} else {
-    Write-Host "[2/3] Starting FastAPI AI Service (Port 8000)..." -ForegroundColor Yellow
-    $aiOut = Join-Path $AiDir "ai-runtime.out.log"
-    $aiErr = Join-Path $AiDir "ai-runtime.err.log"
-    Start-Process -FilePath $PythonExe -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000" -WorkingDirectory $AiDir -WindowStyle Hidden -RedirectStandardOutput $aiOut -RedirectStandardError $aiErr
-    Write-Host "      -> Started FastAPI AI Service at http://127.0.0.1:8000" -ForegroundColor Green
+    Write-Host "[2/3] Stopping old process on Port 8000 (PID: $($aiPids -join ', '))..." -ForegroundColor Yellow
+    Stop-PortProcess 8000
+    Start-Sleep -Milliseconds 600
 }
+Write-Host "[2/3] Starting FastAPI AI Service (Port 8000) with GPU Python..." -ForegroundColor Yellow
+$aiOut = Join-Path $AiDir "ai-runtime.out.log"
+$aiErr = Join-Path $AiDir "ai-runtime.err.log"
+Start-Process -FilePath $PythonExe -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000" -WorkingDirectory $AiDir -WindowStyle Hidden -RedirectStandardOutput $aiOut -RedirectStandardError $aiErr
+Write-Host "      -> Started FastAPI AI Service at http://127.0.0.1:8000" -ForegroundColor Green
 
 # 3. Free Port 4000 if an old Next.js process is holding it, then start Next.js Frontend (:4000)
 $webPids = Get-PortPids 4000

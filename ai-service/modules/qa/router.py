@@ -53,9 +53,8 @@ async def submit_question(
     Dùng đúng luật validate của aggregator (text không rỗng, timestamp hợp
     lệ) để nhất quán với /aggregate. Gửi lại cùng id sẽ ghi đè (idempotent
     — an toàn nếu client retry do mất mạng)."""
-    aggregator: CustomSemanticQuestionAggregator = request.app.state.aggregator
     try:
-        aggregator.parse_and_validate([payload.model_dump()])
+        CustomSemanticQuestionAggregator.parse_and_validate([payload.model_dump()])
     except InvalidQuestionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

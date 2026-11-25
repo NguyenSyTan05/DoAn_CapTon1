@@ -43,6 +43,7 @@ from modules.live_translate.speech_engine import SpeechEngine
 from modules.live_translate.text_filters import (
     decide_language,
     finalize_text,
+    is_decoder_loop,
     is_hallucination,
     remove_repeated_phrases,
 )
@@ -52,7 +53,7 @@ logger = logging.getLogger("classbridge.live_translate")
 router = APIRouter()
 
 MAX_FRAME_BYTES = 8 * 1024 * 1024
-MAX_QUEUE = 2  # giữ hàng đợi ngắn để không bao giờ tích tụ độ trễ hàng chục giây
+MAX_QUEUE = 8  # đủ chứa các mệnh đề liên tiếp của giảng viên mà không rớt câu
 LANGS = {"auto", "vi", "en"}
 
 
@@ -68,7 +69,12 @@ def decode_frame(data: bytes, fmt: str) -> numpy.ndarray:
 
 
 async def _process_utterance(
-    app_state: Any, scope: str, audio: numpy.ndarray, language: str, translations: set[asyncio.Task]
+    app_state: Any,
+    scope: str,
+    audio: numpy.ndarray,
+    language: str,
+    translations: set[asyncio.Task],
+    order_lock: asyncio.Lock,
 ) -> None:
     engine: SpeechEngine = app_state.speech_engine
     rooms: RoomRegistry = app_state.live_rooms
@@ -78,7 +84,10 @@ async def _process_utterance(
     result = await asyncio.to_thread(engine.transcribe, audio, forced_lang)
     if result is None:
         return
-    text = finalize_text(result.text)
+    raw_text = result.text
+    if is_decoder_loop(raw_text):
+        return
+    text = finalize_text(raw_text)
     if not text or is_hallucination(
         text,
         no_speech_prob=result.no_speech_prob,
@@ -104,27 +113,54 @@ async def _process_utterance(
         },
     )
 
-    # 2) Dịch chạy nền để không chặn câu kế tiếp
+    # 2) Dịch chạy nền để không chặn câu kế tiếp; khóa FIFO giữ đúng thứ tự câu khi ghi history/gửi
     async def translate() -> None:
-        try:
-            translated = await asyncio.to_thread(ai_service.transcript_text, text, source, target)
-        except Exception:
-            logger.exception("Dịch thất bại")
-            translated = ""
-        translated = remove_repeated_phrases(translated)
-        await rooms.publish_translation(
-            scope,
-            {"type": "translation", "segment_id": segment_id,
-             "translated_text": translated, "target_lang": target},
-            {"type": "result", "segment_id": segment_id, "original_text": text,
-             "translated_text": translated, "source_lang": source, "target_lang": target,
-             "stt_sec": stt_seconds, "duration_sec": round(time.perf_counter() - started, 3),
-             "timestamp": stamp},
-        )
+        async with order_lock:
+            try:
+                translated = await asyncio.to_thread(ai_service.transcript_text, text, source, target)
+            except Exception:
+                logger.exception("Dịch thất bại")
+                translated = ""
+            translated = remove_repeated_phrases(translated)
+            await rooms.publish_translation(
+                scope,
+                {"type": "translation", "segment_id": segment_id,
+                 "translated_text": translated, "target_lang": target},
+                {"type": "result", "segment_id": segment_id, "original_text": text,
+                 "translated_text": translated, "source_lang": source, "target_lang": target,
+                 "stt_sec": stt_seconds, "duration_sec": round(time.perf_counter() - started, 3),
+                 "timestamp": stamp},
+            )
 
     task = asyncio.create_task(translate())
     translations.add(task)
     task.add_done_callback(translations.discard)
+
+
+@router.get("/api/v1/transcripts")
+async def get_session_transcripts(
+    websocket_or_req_session: str | None = Query(None, alias="session"),
+) -> dict[str, Any]:
+    """Lấy toàn bộ bản ghi lời giảng & bản dịch đã lưu của phiên học."""
+    from pathlib import Path
+    import re
+
+    scope = normalize_session(websocket_or_req_session)
+    if scope is None:
+        return {"session": "", "items": []}
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", scope or "default")[:80] or "default"
+    jsonl_path = Path(__file__).resolve().parents[2] / "transcripts" / f"{safe_name}.jsonl"
+    items: list[dict[str, Any]] = []
+    if jsonl_path.is_file():
+        with open(jsonl_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        items.append(json.loads(line))
+                    except ValueError:
+                        continue
+    return {"session": scope, "count": len(items), "items": items}
 
 
 @router.websocket("/api/v1/ws/live-translate")
@@ -153,26 +189,29 @@ async def live_translate(
         await websocket.send_json({"type": "history", "items": list(room.history)})
 
     segmenter = UtteranceSegmenter()
-    queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE)
+    queue: asyncio.Queue[tuple[numpy.ndarray, str] | None] = asyncio.Queue(maxsize=MAX_QUEUE)
     translations: set[asyncio.Task] = set()
+    order_lock = room.order_lock
 
     async def worker() -> None:
         while True:
-            audio = await queue.get()
-            if audio is None:
+            item = await queue.get()
+            if item is None:
                 return
+            audio, utt_lang = item
             try:
-                await _process_utterance(app_state, scope, audio, language, translations)
+                await _process_utterance(app_state, scope, audio, utt_lang, translations, order_lock)
             except Exception:
                 logger.exception("Lỗi xử lý câu nói, duy trì kết nối")
 
-    def enqueue(audio: numpy.ndarray) -> None:
+    def enqueue(audio: numpy.ndarray, utt_lang: str) -> None:
         if queue.full():
             try:
-                queue.get_nowait()  # bỏ câu cũ nhất
+                queue.get_nowait()  # bỏ câu cũ nhất khi quá tải
+                logger.warning("Hàng đợi STT đầy (%d), bỏ 1 đoạn cũ để giữ thời gian thực", MAX_QUEUE)
             except asyncio.QueueEmpty:
                 pass
-        queue.put_nowait(audio)
+        queue.put_nowait((audio, utt_lang))
 
     worker_task = asyncio.create_task(worker()) if is_lecturer else None
 
@@ -197,7 +236,7 @@ async def live_translate(
                 elif action == "end" and is_lecturer:
                     tail = segmenter.flush()
                     if tail is not None:
-                        enqueue(tail)
+                        enqueue(tail, language)
                 continue
 
             raw = message.get("bytes")
@@ -208,20 +247,24 @@ async def live_translate(
                     logger.warning("Đã bỏ qua gói audio lỗi: %s", exc)
                     continue
                 for utterance in segmenter.feed(pcm):
-                    enqueue(utterance)
+                    enqueue(utterance, language)
     except WebSocketDisconnect:
         pass
     finally:
         rooms.leave(scope, websocket)
         if worker_task is not None:
             tail = segmenter.flush()
-            if tail is not None:
-                enqueue(tail)
-            enqueue(None)  # type: ignore[arg-type]
             try:
-                await asyncio.wait_for(worker_task, timeout=30)
+                if tail is not None:
+                    await asyncio.wait_for(queue.put((tail, language)), timeout=30)
+                await asyncio.wait_for(queue.put(None), timeout=30)
+                await asyncio.wait_for(worker_task, timeout=60)
                 if translations:
                     await asyncio.wait(translations, timeout=30)
             except (asyncio.TimeoutError, Exception):
                 worker_task.cancel()
+            finally:
+                for pending in list(translations):
+                    if not pending.done():
+                        pending.cancel()
         logger.info("🔴 WS đã rời phòng '%s' (%s)", scope or "mặc định", websocket.client)
