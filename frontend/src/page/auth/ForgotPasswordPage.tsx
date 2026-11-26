@@ -43,6 +43,7 @@ export default function ForgotPasswordPage() {
   const [challengeId, setChallengeId] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [choices, setChoices] = useState<number[]>([]);
+  const [devCode, setDevCode] = useState<number | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -76,9 +77,10 @@ export default function ForgotPasswordPage() {
   ];
   const unmetRules = password ? passwordRules.filter((r) => !r.ok) : [];
 
-  const applyChallenge = (c: { challengeId?: string; expiresIn: number; choices: number[] }) => {
+  const applyChallenge = (c: { challengeId?: string; expiresIn: number; choices: number[]; devCode?: number }) => {
     if (c.challengeId) setChallengeId(c.challengeId);
     setChoices(c.choices);
+    setDevCode(typeof c.devCode === "number" ? c.devCode : null);
     setExpiresAt(Date.now() + c.expiresIn * 1000);
   };
 
@@ -125,7 +127,7 @@ export default function ForgotPasswordPage() {
         setResetToken(result.resetToken);
         setStep(3);
       } else if (Array.isArray(result.choices)) {
-        applyChallenge({ expiresIn: result.expiresIn, choices: result.choices });
+        applyChallenge({ expiresIn: result.expiresIn, choices: result.choices, devCode: result.devCode });
         setError(
           result.message || "Con số vừa chọn chưa đúng. Một số mới đã được gửi đến email của bạn.",
         );
@@ -274,6 +276,21 @@ export default function ForgotPasswordPage() {
               <p className={styles.hint}>
                 Chúng tôi đã gửi một con số đến <strong>{verifiedEmail}</strong>. Hãy chọn đúng con số có trong email:
               </p>
+              {devCode !== null && (
+                <p
+                  style={{
+                    margin: "8px 0 12px",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    background: "#eef4ff",
+                    color: "#1d4ed8",
+                    fontSize: 13,
+                    textAlign: "center",
+                  }}
+                >
+                  Chế độ test cục bộ (chưa điền SMTP): Con số cần chọn là <strong>{devCode}</strong>
+                </p>
+              )}
               <p
                 className={`${styles.timer} ${secondsLeft === 0 ? styles.timerExpired : ""}`}
                 role="timer"

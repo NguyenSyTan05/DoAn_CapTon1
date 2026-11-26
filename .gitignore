@@ -27,3 +27,9 @@ frontend_vite_backup/
 *.bin
 ~$*
 .vscode/
+.vercel/
+qdrant_storage/
+ai-service/data/
+ai-service/uploads/
+ai-service/kill_switch.flag
+tunnel-urls.json

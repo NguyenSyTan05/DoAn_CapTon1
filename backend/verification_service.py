@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import secrets
 import smtplib
 import ssl
@@ -648,9 +649,10 @@ def validate_email_deliverability(email: str) -> str:
     # Lazy eviction: only clean up the looked-up entry if stale (already handled above).
     # Periodic full eviction would be in a background task; skip full scan on every call.
 
-    api_key = current_app.config.get("EMAIL_VALIDATION_API_KEY")
+    api_key = (current_app.config.get("EMAIL_VALIDATION_API_KEY") or "").strip()
     if not api_key:
-        raise EmailValidationServiceError("email_validation_configuration_error")
+        logger.info("EMAIL_VALIDATION_API_KEY is empty — skipping external AbstractAPI reputation check.")
+        return "unknown"
 
     query = urlencode({"email": email})
     req = Request(
@@ -700,6 +702,19 @@ def validate_email_deliverability(email: str) -> str:
     return result_status
 
 
+def is_smtp_configured() -> bool:
+    smtp_host     = (current_app.config.get("SMTP_HOST") or "").strip()
+    smtp_username = (current_app.config.get("SMTP_USERNAME") or "").strip()
+    smtp_password = "".join((current_app.config.get("SMTP_PASSWORD") or "").split())
+    return bool(smtp_host and smtp_username and smtp_password)
+
+
+def is_dev_otp_fallback_enabled() -> bool:
+    if is_smtp_configured():
+        return False
+    return os.getenv("SMTP_DEV_CONSOLE_FALLBACK", "0").strip().lower() in ("1", "true", "yes")
+
+
 def _deliver_smtp_message(message: EmailMessage) -> None:
     smtp_host     = current_app.config["SMTP_HOST"]
     smtp_username = current_app.config["SMTP_USERNAME"]
@@ -708,6 +723,13 @@ def _deliver_smtp_message(message: EmailMessage) -> None:
     smtp_port     = current_app.config["SMTP_PORT"]
 
     if not all((smtp_host, smtp_username, smtp_password, smtp_from)):
+        if is_dev_otp_fallback_enabled():
+            logger.warning(
+                "[DEV-OTP] SMTP chưa được điền — bỏ qua gửi thư thật tới %s (%s)",
+                message["To"],
+                message["Subject"],
+            )
+            return
         raise RuntimeError("SMTP configuration is incomplete")
 
     message["From"] = smtp_from

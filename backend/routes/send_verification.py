@@ -12,6 +12,7 @@ from verification_service import (
     check_challenge_cooldown,
     create_otp_challenge,
     generate_number_choices,
+    is_dev_otp_fallback_enabled,
     send_verification_email,
     validate_email_deliverability,
 )
@@ -110,8 +111,11 @@ def send_email_verification():
         current_app.logger.exception("Failed to persist registration verification challenge")
         return jsonify({"message": "Could not start verification right now. Please try again."}), 500
 
-    return jsonify({
+    resp_body = {
         "challengeId": challenge_id,
         "choices": choices,
         "expiresIn": challenge_ttl_seconds,
-    }), 200
+    }
+    if is_dev_otp_fallback_enabled():
+        resp_body["devCode"] = code
+    return jsonify(resp_body), 200

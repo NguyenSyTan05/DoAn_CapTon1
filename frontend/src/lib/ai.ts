@@ -9,7 +9,29 @@
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
+function resolveRuntimeGateway(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = (params.get("gateway") || "").trim().replace(/\/$/, "");
+    if (fromQuery && /^https?:\/\//i.test(fromQuery)) {
+      window.localStorage.setItem("cb_gateway_url", fromQuery);
+      return fromQuery;
+    }
+    if (params.get("gateway") === "reset") {
+      window.localStorage.removeItem("cb_gateway_url");
+      return "";
+    }
+    return (window.localStorage.getItem("cb_gateway_url") || "").trim().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
 export function aiHttp(): string {
+  const runtimeGateway = resolveRuntimeGateway();
+  if (runtimeGateway) return runtimeGateway;
+
   const configured = (process.env.NEXT_PUBLIC_AI_URL || "").trim().replace(/\/$/, "");
   if (typeof window === "undefined") {
     return configured || "http://localhost:8000";

@@ -89,7 +89,12 @@ def _is_private_lan_origin(origin: str, allowed_ports: set[int | None]) -> bool:
         parsed = urlsplit(origin)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return False
-        ip = ipaddress.ip_address(parsed.hostname)
+        host = parsed.hostname.lower()
+        if parsed.scheme == "https" and (
+            host.endswith(".vercel.app") or host.endswith(".trycloudflare.com")
+        ):
+            return True
+        ip = ipaddress.ip_address(host)
         if not ip.is_private and not ip.is_loopback:
             return False
         return parsed.port in allowed_ports
@@ -188,8 +193,9 @@ def home():
 # For local development only:
 if __name__ == "__main__":
     _debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    _host = os.getenv("HOST", "0.0.0.0" if Config.ALLOW_LAN_ORIGINS else "127.0.0.1")
     logger.warning(
         "Running with Flask dev server (single-process, not for production). "
         "Use Gunicorn for production deployments."
     )
-    app.run(debug=_debug, host="127.0.0.1", port=int(os.getenv("PORT", "5000")))
+    app.run(debug=_debug, host=_host, port=int(os.getenv("PORT", "5000")))

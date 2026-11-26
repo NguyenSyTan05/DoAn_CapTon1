@@ -21,8 +21,8 @@ const sendRegistrationVerification = async (email) => {
   return res.data;
 };
 
-const checkRegistrationEmail = async (email) => {
-  const res = await api.post("/auth/email/check", { email });
+const checkRegistrationEmail = async (email, studentCode) => {
+  const res = await api.post("/auth/email/check", { email, studentCode });
   return res.data;
 };
 

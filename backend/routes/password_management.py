@@ -42,6 +42,7 @@ from verification_service import (
     consume_password_reset_session,
     create_otp_challenge,
     generate_number_choices,
+    is_dev_otp_fallback_enabled,
     issue_password_reset_token,
     load_otp_challenge,
     rotate_wrong_otp_choice,
@@ -316,13 +317,14 @@ def send_forgot_password_challenge():
         logger.exception("Failed to store password reset challenge for %s", email)
         return jsonify({"message": "Không thể khởi tạo phiên khôi phục mật khẩu lúc này."}), 500
 
-    return jsonify(
-        {
-            "challengeId": challenge_id,
-            "choices":     choices,
-            "expiresIn":   challenge_ttl_seconds,
-        }
-    ), 200
+    resp_body: dict[str, Any] = {
+        "challengeId": challenge_id,
+        "choices":     choices,
+        "expiresIn":   challenge_ttl_seconds,
+    }
+    if is_dev_otp_fallback_enabled():
+        resp_body["devCode"] = code
+    return jsonify(resp_body), 200
 
 
 # =====================================================================
@@ -379,14 +381,15 @@ def verify_forgot_password_challenge():
         rotate_wrong_otp_choice(
             challenge_id, challenge, "RESET_PASSWORD", new_code, new_choices, max_wrong=MAX_WRONG_PICKS
         )
-        return jsonify(
-            {
-                "verified":  False,
-                "message":   "Con số vừa chọn chưa đúng. Một con số mới đã được gửi tới email của bạn.",
-                "choices":   new_choices,
-                "expiresIn": challenge_ttl_seconds,
-            }
-        ), 200
+        resp_body: dict[str, Any] = {
+            "verified":  False,
+            "message":   "Con số vừa chọn chưa đúng. Một con số mới đã được gửi tới email của bạn.",
+            "choices":   new_choices,
+            "expiresIn": challenge_ttl_seconds,
+        }
+        if is_dev_otp_fallback_enabled():
+            resp_body["devCode"] = new_code
+        return jsonify(resp_body), 200
 
     acct_match = _find_account_by_email(str(challenge["email"]))
     reset_token = issue_password_reset_token(

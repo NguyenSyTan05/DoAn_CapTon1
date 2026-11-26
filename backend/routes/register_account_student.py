@@ -78,17 +78,20 @@ def register_account():
         }), 400
     if role == "lecturer":
         lecturer_code = lecturer_code.upper()
-    if not isinstance(challenge_id, str) or len(challenge_id) > 128:
-        return jsonify({"message": "Verify your email before registering."}), 400
 
-    challenge = load_otp_challenge(challenge_id, "REGISTER")
-    if (
-        not challenge
-        or not challenge.get("verified")
-        or challenge["email"] != email
-    ):
-        consume_otp_challenge(challenge_id, "REGISTER")
-        return jsonify({"message": "Verify your email again before registering."}), 400
+    # Hỗ trợ đăng ký trực tiếp không bắt buộc OTP Gmail; chỉ kiểm tra nếu client có gửi challengeId
+    has_challenge = isinstance(challenge_id, str) and bool(challenge_id.strip())
+    if has_challenge:
+        if len(challenge_id) > 128:
+            return jsonify({"message": "Phiên xác thực không hợp lệ."}), 400
+        challenge = load_otp_challenge(challenge_id, "REGISTER")
+        if (
+            not challenge
+            or not challenge.get("verified")
+            or challenge["email"] != email
+        ):
+            consume_otp_challenge(challenge_id, "REGISTER")
+            return jsonify({"message": "Phiên xác thực email không hợp lệ hoặc đã hết hạn."}), 400
 
     try:
         db.session.execute(
@@ -104,7 +107,7 @@ def register_account():
             )
         if account_email_exists(email):
             db.session.rollback()
-            return jsonify({"message": "This email is already registered."}), 409
+            return jsonify({"message": "Email này đã có tài khoản ClassBridge. Vui lòng đăng nhập."}), 409
 
         if role == "student":
             code_exists = db.session.execute(
@@ -113,7 +116,7 @@ def register_account():
             ).scalar_one()
             if code_exists:
                 db.session.rollback()
-                return jsonify({"message": "This student ID is already registered."}), 409
+                return jsonify({"message": "Mã số sinh viên này đã được đăng ký."}), 409
 
             db.session.execute(
                 text(
@@ -172,9 +175,10 @@ def register_account():
         current_app.logger.exception("Account registration failed")
         return jsonify({"message": "Could not create the account. Please try again."}), 500
 
-    consume_otp_challenge(challenge_id, "REGISTER")
+    if has_challenge and isinstance(challenge_id, str):
+        consume_otp_challenge(challenge_id, "REGISTER")
     return jsonify({
         "success": True,
         "role": role,
-        "message": "Account created successfully.",
+        "message": "Tạo tài khoản thành công.",
     }), 201

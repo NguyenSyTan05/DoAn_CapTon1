@@ -6,25 +6,50 @@ $BackendDir = Join-Path $RootDir "backend"
 $AiDir = Join-Path $RootDir "ai-service"
 $FrontendDir = Join-Path $RootDir "frontend"
 
-# AI-service Python: prefer the GPU venv inside ai-service, then a root venv, then system
+# AI-service Python: prefer a GPU venv that includes FastAPI + PyJWT + python-multipart + Torch
 $AiPythonCandidates = @(
     $env:CLASSBRIDGE_AI_PYTHON,
+    (Join-Path (Split-Path -Parent $RootDir) ".venv\Scripts\python.exe"),
     (Join-Path $AiDir ".venv\Scripts\python.exe"),
     $env:CLASSBRIDGE_PYTHON,
-    (Join-Path (Split-Path -Parent $RootDir) ".venv\Scripts\python.exe"),
     (Join-Path $RootDir ".venv\Scripts\python.exe")
 )
-$AiPythonExe = $AiPythonCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$AiPythonExe = $null
+foreach ($cand in $AiPythonCandidates) {
+    if ($cand -and (Test-Path $cand)) {
+        & $cand -c "import fastapi, uvicorn, jwt, multipart" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $AiPythonExe = $cand
+            break
+        }
+    }
+}
+if (-not $AiPythonExe) {
+    $AiPythonExe = $AiPythonCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
 if (-not $AiPythonExe) { $AiPythonExe = "python" }
 
-# Flask backend Python: prefer a backend-specific venv, then system python (Flask has no GPU deps)
+# Flask backend Python: prefer a venv that includes Flask + PyJWT + SQLAlchemy
 $BackendPythonCandidates = @(
     $env:CLASSBRIDGE_BACKEND_PYTHON,
-    $env:CLASSBRIDGE_PYTHON,
     (Join-Path $BackendDir ".venv\Scripts\python.exe"),
+    (Join-Path (Split-Path -Parent $RootDir) ".venv\Scripts\python.exe"),
+    $env:CLASSBRIDGE_PYTHON,
     (Join-Path $RootDir ".venv\Scripts\python.exe")
 )
-$BackendPythonExe = $BackendPythonCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$BackendPythonExe = $null
+foreach ($cand in $BackendPythonCandidates) {
+    if ($cand -and (Test-Path $cand)) {
+        & $cand -c "import flask, jwt, sqlalchemy" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $BackendPythonExe = $cand
+            break
+        }
+    }
+}
+if (-not $BackendPythonExe) {
+    $BackendPythonExe = $BackendPythonCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
 if (-not $BackendPythonExe) { $BackendPythonExe = "python" }
 
 Write-Host "================================================================" -ForegroundColor Cyan
@@ -32,13 +57,21 @@ Write-Host "  CLASSBRIDGE FULL-STACK LAUNCHER (Flask :5000 + AI :8000 + Web :400
 Write-Host "================================================================" -ForegroundColor Cyan
 
 function Get-PortPids([int]$Port) {
-    $lines = netstat -ano | Select-String ":$Port\s+.*LISTENING\s+(\d+)$"
     $pids = @()
-    foreach ($m in $lines) {
-        if ($m.Line -match "\s+(\d+)\s*$") {
-            $procId = [int]$Matches[1]
-            if ($procId -gt 0 -and $pids -notcontains $procId) {
-                $pids += $procId
+    $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    foreach ($c in $conns) {
+        if ($c.OwningProcess -gt 0 -and $pids -notcontains $c.OwningProcess) {
+            $pids += [int]$c.OwningProcess
+        }
+    }
+    if ($pids.Count -eq 0) {
+        $lines = netstat -ano | Select-String ":$Port\s+"
+        foreach ($m in $lines) {
+            if ($m.Line -match "\s+(\d+)\s*$") {
+                $procId = [int]$Matches[1]
+                if ($procId -gt 0 -and $pids -notcontains $procId) {
+                    $pids += $procId
+                }
             }
         }
     }
@@ -63,6 +96,50 @@ function Wait-PortFree([int]$Port, [int]$TimeoutMs = 8000) {
         $elapsed += 250
     }
     return ((Get-PortPids $Port).Count -eq 0)
+}
+
+function Test-TcpBind([string]$BindIp, [int]$Port) {
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([ipaddress]::Parse($BindIp), $Port)
+        $listener.Start()
+        $listener.Stop()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Pre-check Frontend port (default 4000) so FRONTEND_ORIGIN is always accurate for Flask CORS
+$webPids = Get-PortPids 4000
+if ($webPids.Count -gt 0) {
+    Write-Host "[Pre-check] Stopping old process on Port 4000 (PID: $($webPids -join ', '))..." -ForegroundColor Yellow
+    Stop-PortProcess 4000
+    [void](Wait-PortFree 4000)
+}
+
+$WebHost = "0.0.0.0"
+$WebPort = 4000
+$WebAlreadyServing = $false
+
+if (-not (Test-TcpBind "0.0.0.0" 4000)) {
+    try {
+        $probe = Invoke-WebRequest -Uri "http://127.0.0.1:4000" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($probe.StatusCode -ge 200 -and $probe.StatusCode -lt 500) {
+            $WebAlreadyServing = $true
+        }
+    } catch {}
+
+    if (-not $WebAlreadyServing) {
+        if (Test-TcpBind "127.0.0.1" 4000) {
+            $WebHost = "127.0.0.1"
+            $WebPort = 4000
+        } else {
+            $WebHost = "0.0.0.0"
+            $WebPort = 4005
+            $env:FRONTEND_ORIGIN = "http://localhost:4000,http://localhost:4005,http://127.0.0.1:4005"
+            $env:AI_ALLOWED_ORIGINS = "http://localhost:4000,http://127.0.0.1:4000,http://localhost:4005,http://127.0.0.1:4005"
+        }
+    }
 }
 
 # 1. Always restart Flask Backend (:5000) so newly added routes are active (Debug mode is off)
@@ -91,18 +168,19 @@ $aiErr = Join-Path $AiDir "ai-runtime.err.log"
 Start-Process -FilePath $AiPythonExe -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000" -WorkingDirectory $AiDir -WindowStyle Hidden -RedirectStandardOutput $aiOut -RedirectStandardError $aiErr
 Write-Host "      -> Started FastAPI AI Service at http://127.0.0.1:8000" -ForegroundColor Green
 
-# 3. Free Port 4000 if an old Next.js process is holding it, then start Next.js Frontend (:4000)
-$webPids = Get-PortPids 4000
-if ($webPids.Count -gt 0) {
-    Write-Host "[3/3] Cleaning up old process on Port 4000 (PID: $($webPids -join ', '))..." -ForegroundColor Yellow
-    Stop-PortProcess 4000
-    [void](Wait-PortFree 4000)
-}
+# 3. Start Next.js Frontend (or keep backend/AI alive if Frontend is already serving)
 $lockFile = Join-Path $FrontendDir ".next\dev\lock"
 if (Test-Path $lockFile) {
     Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "[3/3] Starting Next.js Frontend at http://localhost:4000 ..." -ForegroundColor Green
-Set-Location $FrontendDir
-npx next dev -H 0.0.0.0 -p 4000
+if ($WebAlreadyServing) {
+    Write-Host "[3/3] Next.js Frontend is already running at http://localhost:4000 — keeping Backend (:5000) & AI (:8000) alive..." -ForegroundColor Green
+    while ($true) {
+        Start-Sleep -Seconds 30
+    }
+} else {
+    Write-Host "[3/3] Starting Next.js Frontend at http://localhost:$WebPort (host $WebHost) ..." -ForegroundColor Green
+    Set-Location $FrontendDir
+    npx next dev -H $WebHost -p $WebPort
+}

@@ -8,6 +8,7 @@ from verification_service import (
     challenge_ttl_seconds,
     check_selected_number,
     generate_number_choices,
+    is_dev_otp_fallback_enabled,
     load_otp_challenge,
     mark_registration_verified,
     rotate_wrong_otp_choice,
@@ -64,12 +65,15 @@ def verify_email_code():
             current_app.logger.exception("Failed to update registration OTP attempt")
             return jsonify({"message": "Could not update verification challenge."}), 500
 
-        return jsonify({
+        resp_body = {
             "verified": False,
             "message": "That number did not match. A new verification number was emailed.",
             "choices": new_choices,
             "expiresIn": challenge_ttl_seconds,
-        }), 200
+        }
+        if is_dev_otp_fallback_enabled():
+            resp_body["devCode"] = new_code
+        return jsonify(resp_body), 200
 
     try:
         mark_registration_verified(challenge_id, challenge)
