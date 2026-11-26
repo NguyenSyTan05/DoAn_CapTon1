@@ -103,11 +103,15 @@ def _register_cuda_dll_paths() -> None:
         return
     import sys
 
-    candidates = [
+    candidates: list[Path] = [
         Path(sys.prefix) / "Lib" / "site-packages" / "torch" / "lib",
         _AI_SERVICE_ROOT / ".venv" / "Lib" / "site-packages" / "torch" / "lib",
-        Path("d:/TailieuNPKH/classbridge/backend/ai-service/.venv/Lib/site-packages/torch/lib"),
+        _AI_SERVICE_ROOT.parent / ".venv" / "Lib" / "site-packages" / "torch" / "lib",
+        _AI_SERVICE_ROOT.parents[1] / ".venv" / "Lib" / "site-packages" / "torch" / "lib",
     ]
+    custom_torch_lib = os.getenv("CLASSBRIDGE_TORCH_LIB_DIR", "").strip()
+    if custom_torch_lib:
+        candidates.insert(0, Path(custom_torch_lib))
     current_path = os.environ.get("PATH", "")
     for d in candidates:
         if d.is_dir():
@@ -217,7 +221,7 @@ class WhisperEngine:
                 continue
 
         local_fallback = self._first_existing_dir([
-            "d:/TailieuNPKH/classbridge/backend/ai-service/.models/hub/models--Systran--faster-whisper-small/snapshots/536b0662742c02347bc0e980a01041f333bce120",
+            os.getenv("WHISPER_FALLBACK_MODEL_DIR"),
             _AI_SERVICE_ROOT / "trained_models" / "stt" / "model_vi_ct2",
         ])
         if local_fallback:

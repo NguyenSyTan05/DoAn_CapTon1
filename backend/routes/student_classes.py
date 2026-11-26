@@ -47,18 +47,32 @@ def _current_student():
 
 
 def _audit(student, class_row, joined_via="CODE"):
-    """Ghi audit log; lỗi ghi log không làm hỏng việc tham gia lớp."""
+    """Ghi audit log; lỗi ghi log không làm hỏng việc tham gia lớp.
+
+    Columns actor_email / entity_name / status do not exist in audit_logs
+    (db.sql). Pack them into the details JSONB field instead.
+    """
+    import json as _json
     try:
+        details = _json.dumps(
+            {
+                "email": student["email"],
+                "class_name": class_row["class_name"],
+                "joined_via": joined_via,
+            },
+            ensure_ascii=False,
+        )
         db.session.execute(
             text(
                 """
                 INSERT INTO audit_logs (
-                    action, description, actor_role, actor_email, student_id,
-                    entity_type, entity_id, entity_name, status, created_at
+                    action, description, actor_role, student_id,
+                    entity_type, entity_id, details, created_at
                 ) VALUES (
-                    :action, :description, 'STUDENT', :email,
+                    :action, :description, 'STUDENT',
                     CAST(:student_id AS uuid), 'class',
-                    CAST(:class_id AS uuid), :class_name, 'success', NOW()
+                    CAST(:class_id AS uuid),
+                    CAST(:details AS jsonb), NOW()
                 )
                 """
             ),
@@ -68,10 +82,9 @@ def _audit(student, class_row, joined_via="CODE"):
                     f"{student['full_name']} tham gia lớp {class_row['class_name']}"
                     f" bằng {joined_via}"
                 ),
-                "email": student["email"],
                 "student_id": student["id"],
                 "class_id": class_row["class_id"],
-                "class_name": class_row["class_name"],
+                "details": details,
             },
         )
         db.session.commit()

@@ -3,6 +3,7 @@
 import axios from "axios";
 import { useEffect, useState, type ChangeEvent } from "react";
 import { useNavigate } from "@/lib/router-compat";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Calendar,
   Clock,
@@ -17,6 +18,7 @@ import {
   ArrowLeft,
   Layers,
   MessageSquare,
+  Sparkles,
   Upload,
 } from "lucide-react";
 import api from "../../../services/api";
@@ -524,6 +526,20 @@ export default function ChiTietPhienHoc({
               </button>
             </div>
           )}
+          {(status === "live" || status === "ended") && session && (
+            <div className={styles.startOptions}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() =>
+                  navigate(
+                    `/giangvien/summary?session=${encodeURIComponent(session.id)}`,
+                  )
+                }
+              >
+                <Sparkles size={16} /> Tóm tắt bài giảng & Heatmap
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -618,7 +634,18 @@ export default function ChiTietPhienHoc({
                       <h4>Anonymous Q&A</h4>
                     </div>
                     <p>Theo dõi câu hỏi ẩn danh từ sinh viên.</p>
-                    <button className={styles.btnToolAction}>Mở Q&A</button>
+                    <button
+                      type="button"
+                      className={styles.btnToolAction}
+                      onClick={() =>
+                        window.open(
+                          `/dashboard/teacher?session=${encodeURIComponent(session?.id || sessionId || "")}`,
+                          "_blank",
+                        )
+                      }
+                    >
+                      Mở Q&A
+                    </button>
                   </div>
 
                   <div className={styles.toolItem}>
@@ -627,7 +654,16 @@ export default function ChiTietPhienHoc({
                       <h4>Question Clusters</h4>
                     </div>
                     <p>Xem các câu hỏi tương đồng được AI gom nhóm.</p>
-                    <button className={styles.btnToolAction}>
+                    <button
+                      type="button"
+                      className={styles.btnToolAction}
+                      onClick={() =>
+                        window.open(
+                          `/dashboard/teacher?session=${encodeURIComponent(session?.id || sessionId || "")}#topics`,
+                          "_blank",
+                        )
+                      }
+                    >
                       Xem nhóm câu hỏi
                     </button>
                   </div>
@@ -641,7 +677,16 @@ export default function ChiTietPhienHoc({
                       Trả lời câu hỏi đại diện và phân phối câu trả lời cho nhóm
                       liên quan.
                     </p>
-                    <button className={styles.btnToolAction}>
+                    <button
+                      type="button"
+                      className={styles.btnToolAction}
+                      onClick={() =>
+                        window.open(
+                          `/dashboard/teacher?session=${encodeURIComponent(session?.id || sessionId || "")}#answers`,
+                          "_blank",
+                        )
+                      }
+                    >
                       Quản lý trả lời
                     </button>
                   </div>
@@ -650,6 +695,20 @@ export default function ChiTietPhienHoc({
             </div>
 
             <div className={styles.workspaceSidebar}>
+              {session?.classCode && typeof window !== "undefined" && (
+                <div className={styles.card} style={{ marginBottom: 16, textAlign: "center" }}>
+                  <h3 className={styles.sectionHeading}>Mã QR vào lớp</h3>
+                  <div style={{ display: "inline-block", padding: 12, background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                    <QRCodeSVG
+                      value={`${window.location.origin}/sinhvien?joinCode=${encodeURIComponent(session.classCode)}`}
+                      size={148}
+                    />
+                  </div>
+                  <p style={{ margin: "10px 0 0", fontSize: 13, fontWeight: 700, color: "#1e293b" }}>
+                    Mã lớp: {session.classCode}
+                  </p>
+                </div>
+              )}
               {lectureMaterialCard}
             </div>
           </div>

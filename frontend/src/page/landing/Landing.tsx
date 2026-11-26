@@ -99,13 +99,54 @@ export default function Landing() {
             </button>
           </Link>
 
-          <button type="button" className={styles.secondaryBtn}>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() =>
+              document.getElementById("tinh-nang")?.scrollIntoView({ behavior: "smooth" })
+            }
+          >
             <span className={styles.playIconWrapper}>
               <Play size={10} fill="currentColor" />
             </span>
             Tìm hiểu thêm
           </button>
         </div>
+
+        <section
+          id="tinh-nang"
+          style={{
+            width: "100%",
+            maxWidth: 1040,
+            margin: "56px auto 0",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 18,
+            textAlign: "left",
+          }}
+        >
+          <div style={{ background: "rgba(15, 23, 42, 0.72)", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 16, padding: 22 }}>
+            <Languages size={24} color="#38bdf8" />
+            <h3 style={{ margin: "12px 0 8px", fontSize: 18, color: "#f8fafc" }}>Phụ đề Song ngữ Thời gian thực</h3>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#cbd5e1" }}>
+              Nhận dạng giọng nói giảng viên (Faster-Whisper) và dịch tức thì Anh ↔ Việt qua NLLB-200 với luồng progressive độ trễ thấp.
+            </p>
+          </div>
+          <div id="giai-phap" style={{ background: "rgba(15, 23, 42, 0.72)", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 16, padding: 22 }}>
+            <Brain size={24} color="#a78bfa" />
+            <h3 style={{ margin: "12px 0 8px", fontSize: 18, color: "#f8fafc" }}>Hỏi đáp Ẩn danh & Gom cụm AI</h3>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#cbd5e1" }}>
+              Sinh viên tự tin đặt câu hỏi bằng tiếng Việt hoặc tiếng Anh; mô hình ngữ nghĩa MiniLM tự động gom các câu trùng ý cho giảng viên.
+            </p>
+          </div>
+          <div id="hieu-qua" style={{ background: "rgba(15, 23, 42, 0.72)", border: "1px solid rgba(148,163,184,0.2)", borderRadius: 16, padding: 22 }}>
+            <LayoutGrid size={24} color="#34d399" />
+            <h3 style={{ margin: "12px 0 8px", fontSize: 18, color: "#f8fafc" }}>Tóm tắt Bài giảng & Heatmap</h3>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#cbd5e1" }}>
+              Tổng hợp cấu trúc bài học, từ vựng học thuật và bản đồ nhiệt mức độ thắc mắc theo từng trang slide ngay sau buổi giảng.
+            </p>
+          </div>
+        </section>
       </main>
 
       <aside aria-label="Quick Tools" className={styles.sidebar}>

@@ -7,11 +7,27 @@
  *  - Phiên học lấy từ `?session=<id>` hoặc đường dẫn `/.../classroom/<id>`.
  */
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+
 export function aiHttp(): string {
-  if (process.env.NEXT_PUBLIC_AI_URL) return process.env.NEXT_PUBLIC_AI_URL.replace(/\/$/, "");
-  return typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8000`
-    : "http://localhost:8000";
+  const configured = (process.env.NEXT_PUBLIC_AI_URL || "").trim().replace(/\/$/, "");
+  if (typeof window === "undefined") {
+    return configured || "http://localhost:8000";
+  }
+  const pageHost = window.location.hostname;
+  if (!configured) {
+    return `${window.location.protocol}//${pageHost}:8000`;
+  }
+  try {
+    const parsed = new URL(configured);
+    if (LOOPBACK_HOSTS.has(parsed.hostname) && !LOOPBACK_HOSTS.has(pageHost)) {
+      parsed.hostname = pageHost;
+      return parsed.origin;
+    }
+  } catch {
+    // Giữ nguyên nếu chuỗi cấu hình không phải URL tuyệt đối
+  }
+  return configured;
 }
 
 export function aiWs(): string {
@@ -39,9 +55,11 @@ export function withParams(url: string, params: Record<string, Param>): string {
   return qs ? `${url}${url.includes("?") ? "&" : "?"}${qs}` : url;
 }
 
-/** URL REST của backend AI, tự gắn phiên hiện tại. */
+/** URL REST của backend AI, tự gắn phiên hiện tại nếu đường dẫn chưa có ?session=. */
 export function aiUrl(path: string): string {
-  return withParams(`${aiHttp()}${path}`, { session: currentSession() });
+  const full = `${aiHttp()}${path}`;
+  if (/[?&]session=/.test(path)) return full;
+  return withParams(full, { session: currentSession() });
 }
 
 /** Header xác thực cho backend AI: cùng JWT Flask lưu ở localStorage("token"). */
@@ -63,7 +81,7 @@ const AI_ACCESS_MESSAGES = {
 };
 
 // Route REST theo phòng (cần ?session=); /questions/aggregate và /translate chỉ cần token.
-const ROOM_PATH = /^\/api\/v1\/(answers|slides|questions(?!\/aggregate))(\/|\?|$)/;
+const ROOM_PATH = /^\/api\/v1\/(answers|slides|summaries|transcripts|questions(?!\/aggregate))(\/|\?|$)/;
 
 let aiAccessMessage = "";
 let redirectingToLogin = false;
@@ -149,7 +167,13 @@ export async function aiFetch(path: string, init: RequestInit = {}): Promise<Res
   return res;
 }
 
-/** URL WebSocket của backend AI, tự gắn phiên hiện tại. */
+/** URL WebSocket của backend AI, tự gắn phiên hiện tại và JWT token (nếu đã đăng nhập). */
 export function aiWsUrl(path: string, extra: Record<string, Param> = {}): string {
-  return withParams(`${aiWs()}${path}`, { session: currentSession(), ...extra });
+  const token =
+    typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
+  return withParams(`${aiWs()}${path}`, {
+    session: currentSession(),
+    token: token || undefined,
+    ...extra,
+  });
 }

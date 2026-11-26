@@ -103,7 +103,63 @@ export default function LecturerQuestionPage() {
     sessionId ? "" : "Không có mã phiên học trong địa chỉ trang.",
   );
   const [success, setSuccess] = useState("");
-  const [micMessage, setMicMessage] = useState(false);
+  const [micMessage, setMicMessage] = useState("");
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+
+  const toggleVoiceDictation = () => {
+    if (typeof window === "undefined") return;
+    type SpeechRecInstance = {
+      lang: string;
+      interimResults: boolean;
+      maxAlternatives: number;
+      onresult: ((ev: { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }) => void) | null;
+      onerror: (() => void) | null;
+      onend: (() => void) | null;
+      start: () => void;
+    };
+    type SpeechWindow = {
+      SpeechRecognition?: new () => SpeechRecInstance;
+      webkitSpeechRecognition?: new () => SpeechRecInstance;
+    };
+    const w = window as unknown as SpeechWindow;
+    const SpeechRec = w.SpeechRecognition || w.webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      setMicMessage("Trình duyệt hiện tại chưa hỗ trợ Web Speech API (khuyến nghị dùng Chrome hoặc Edge).");
+      return;
+    }
+    if (isListeningVoice) {
+      setIsListeningVoice(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.lang = "vi-VN";
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      setIsListeningVoice(true);
+      setMicMessage("Đang lắng nghe giọng nói giảng viên... Hãy đọc nội dung câu hỏi.");
+
+      rec.onresult = (ev: { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }) => {
+        const spoken = ev.results?.[0]?.[0]?.transcript?.trim() || "";
+        if (spoken) {
+          setQuestion((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken).slice(0, 500));
+          setMicMessage("Đã điền câu hỏi từ giọng nói.");
+        }
+      };
+      rec.onerror = () => {
+        setMicMessage("Không nhận diện được giọng nói. Vui lòng kiểm tra quyền Micro.");
+      };
+      rec.onend = () => {
+        setIsListeningVoice(false);
+      };
+      rec.start();
+    } catch {
+      setIsListeningVoice(false);
+      setMicMessage("Không thể khởi động thu âm giọng nói trên trình duyệt.");
+    }
+  };
 
   const loadData = useCallback(async () => {
     if (!sessionId) return;
@@ -270,8 +326,8 @@ export default function LecturerQuestionPage() {
           <form onSubmit={(event) => void submitQuestion(event)}>
             <div className={styles.questionLabel}>
               <label className={styles.fieldLabel} htmlFor="question-text">Nội dung câu hỏi</label>
-              <button type="button" className={styles.micButton} onClick={() => setMicMessage(true)}>
-                <Mic size={16} /> Nói câu hỏi
+              <button type="button" className={styles.micButton} onClick={toggleVoiceDictation}>
+                <Mic size={16} /> {isListeningVoice ? "Đang nghe..." : "Nói câu hỏi"}
               </button>
             </div>
             <textarea
@@ -286,7 +342,7 @@ export default function LecturerQuestionPage() {
             />
             {micMessage && (
               <p className={styles.helperNotice} role="status">
-                Mic sẽ được tích hợp sau; hiện tại trang chưa thu âm.
+                {micMessage}
               </p>
             )}
 

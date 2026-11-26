@@ -18,7 +18,7 @@ from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 
-from core.auth import ANY_MEMBER, LECTURER_ONLY, require_room_access
+from core.auth import ANY_MEMBER, LECTURER_ONLY, require_room_access, verify_ws_access
 from core.session_scope import normalize_session, session_param
 from modules.qa.qa_broadcast import QAConnectionManager
 from modules.slides.deck_store import MAX_PDF_BYTES, SlideDeck
@@ -136,6 +136,9 @@ async def slides_websocket(websocket: WebSocket, session: str | None = Query(Non
     'page' mỗi khi giảng viên chuyển slide."""
     scope = normalize_session(session)
     if scope is None:
+        await websocket.close(code=1008)
+        return
+    if await verify_ws_access(websocket, scope, ANY_MEMBER) is None:
         await websocket.close(code=1008)
         return
     manager: QAConnectionManager = websocket.app.state.slide_manager

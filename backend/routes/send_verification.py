@@ -1,22 +1,20 @@
-import secrets
 import smtplib
-import time
 
 from flask import Blueprint, current_app, jsonify, request
 
 from account_service import account_email_exists
 from email_utils import is_valid_email_format
 from extensions import db
+from request_limits import request_limit_exceeded
 from verification_service import (
-    challenge_ttl_seconds,
     EmailValidationServiceError,
-    send_cooldown_seconds,
+    challenge_ttl_seconds,
+    check_challenge_cooldown,
+    create_otp_challenge,
+    generate_number_choices,
     send_verification_email,
     validate_email_deliverability,
-    verification_challenges,
-    verification_send_times,
 )
-from request_limits import request_limit_exceeded
 
 send_verification_bp = Blueprint(
     "send_verification", __name__, url_prefix="/auth/verification"
@@ -33,9 +31,9 @@ def send_email_verification():
     email_value = payload.get("email", "")
     if not isinstance(email_value, str):
         return jsonify({"message": "Enter a valid email address."}), 400
-    if not is_valid_email_format(email_value):
+    email = email_value.strip().lower()
+    if not is_valid_email_format(email):
         return jsonify({"message": "Enter a valid email address."}), 400
-    email = email_value.lower()
 
     try:
         if account_email_exists(email):
@@ -83,22 +81,14 @@ def send_email_verification():
             email,
         )
 
-    now = time.monotonic()
-    last_sent = verification_send_times.get(email)
-    if last_sent is not None and now - last_sent < send_cooldown_seconds:
-        retry_after = int(send_cooldown_seconds - (now - last_sent))
+    retry_after = check_challenge_cooldown(email, "REGISTER")
+    if retry_after > 0:
         return jsonify({
             "message": "Please wait before requesting another verification email.",
             "retryAfter": retry_after,
         }), 429
 
-    code = secrets.randbelow(201) - 100
-    choices = [code]
-    while len(choices) < 4:
-        choice = secrets.randbelow(201) - 100
-        if choice not in choices:
-            choices.append(choice)
-    secrets.SystemRandom().shuffle(choices)
+    code, choices = generate_number_choices()
 
     try:
         send_verification_email(email, code)
@@ -113,18 +103,12 @@ def send_email_verification():
             "message": "Could not send the verification email. Check SMTP configuration and try again.",
         }), 503
 
-    for challenge_id, challenge in list(verification_challenges.items()):
-        if challenge["email"] == email:
-            del verification_challenges[challenge_id]
-
-    challenge_id = secrets.token_urlsafe(32)
-    verification_challenges[challenge_id] = {
-        "email": email,
-        "code": code,
-        "choices": choices,
-        "expires_at": now + challenge_ttl_seconds,
-    }
-    verification_send_times[email] = now
+    try:
+        challenge_id = create_otp_challenge(email, "REGISTER", code, choices, role="student")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to persist registration verification challenge")
+        return jsonify({"message": "Could not start verification right now. Please try again."}), 500
 
     return jsonify({
         "challengeId": challenge_id,

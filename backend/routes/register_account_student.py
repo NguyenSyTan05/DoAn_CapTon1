@@ -1,5 +1,4 @@
 import re
-import time
 
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import text
@@ -9,7 +8,7 @@ from werkzeug.security import generate_password_hash
 from account_service import account_email_exists
 from email_utils import is_valid_email_format
 from extensions import db
-from verification_service import verification_challenges
+from verification_service import consume_otp_challenge, load_otp_challenge
 from request_limits import request_limit_exceeded
 
 register_account_bp = Blueprint("register_account", __name__, url_prefix="/auth")
@@ -82,14 +81,13 @@ def register_account():
     if not isinstance(challenge_id, str) or len(challenge_id) > 128:
         return jsonify({"message": "Verify your email before registering."}), 400
 
-    challenge = verification_challenges.get(challenge_id)
+    challenge = load_otp_challenge(challenge_id, "REGISTER")
     if (
         not challenge
         or not challenge.get("verified")
         or challenge["email"] != email
-        or time.monotonic() >= challenge["expires_at"]
     ):
-        verification_challenges.pop(challenge_id, None)
+        consume_otp_challenge(challenge_id, "REGISTER")
         return jsonify({"message": "Verify your email again before registering."}), 400
 
     try:
@@ -174,7 +172,7 @@ def register_account():
         current_app.logger.exception("Account registration failed")
         return jsonify({"message": "Could not create the account. Please try again."}), 500
 
-    del verification_challenges[challenge_id]
+    consume_otp_challenge(challenge_id, "REGISTER")
     return jsonify({
         "success": True,
         "role": role,

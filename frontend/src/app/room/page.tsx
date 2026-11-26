@@ -154,8 +154,13 @@ export default function AIClassroomPage() {
       const params = asStudent
         ? { role: "viewer", progressive: 1 }
         : { role: "lecturer", fmt: "pcm32", progressive: 1, lang: speechLangRef.current };
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
       const url = base
-        ? `${base}${base.includes('?') ? '&' : '?'}${new URLSearchParams({ ...(currentSession() ? { session: currentSession()! } : {}), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) })}`
+        ? `${base}${base.includes('?') ? '&' : '?'}${new URLSearchParams({
+            ...(currentSession() ? { session: currentSession()! } : {}),
+            ...(token ? { token } : {}),
+            ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+          })}`
         : aiWsUrl("/api/v1/ws/live-translate", params);
       ws = new WebSocket(url);
 
@@ -177,8 +182,8 @@ export default function AIClassroomPage() {
         }
       };
 
-      ws.onclose = () => {
-        if (!isSubscribed) return;
+      ws.onclose = (event) => {
+        if (!isSubscribed || event.code === 1008) return;
         reconnectTimer = setTimeout(connect, 1500);
       };
 
@@ -368,12 +373,20 @@ export default function AIClassroomPage() {
             <span style={{ fontSize: 12, color: '#64748b' }}>
               Câu hỏi bạn gửi là ẩn danh và được gom nhóm cho giảng viên.
             </span>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Link
+              href={sessionId ? `/summary?session=${encodeURIComponent(sessionId)}` : '/summary'}
+              style={{ background: '#0f766e', color: '#fff', borderRadius: 8, padding: '8px 14px', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}
+            >
+              Tóm tắt bài giảng
+            </Link>
             <button
               onClick={() => router.push('/sinhvien')}
               style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer' }}
             >
               Rời lớp
             </button>
+          </div>
           </div>
         </footer>
       </div>
@@ -401,6 +414,22 @@ export default function AIClassroomPage() {
             <option value="vi">Tiếng Việt</option>
             <option value="en">English</option>
           </select>
+          <Link
+            href={sessionId ? `/giangvien/summary?session=${encodeURIComponent(sessionId)}` : "/giangvien/summary"}
+            target="_blank"
+            style={{
+              background: '#0f766e',
+              color: '#fff',
+              padding: '8px 12px',
+              borderRadius: '6px',
+              textDecoration: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              whiteSpace: 'nowrap'
+            }}
+          >
+            Tóm tắt & Heatmap ↗
+          </Link>
           <Link
             href={dashboardHref}
             target="_blank"
@@ -430,8 +459,24 @@ export default function AIClassroomPage() {
         <BottomControles
           nguoiThamGia={users.length}
           onMic={handleMicToggle}
-          onCam={(isCamOff) => console.log("Cam Off:", isCamOff)}
-          onEndCall={() => console.log("End Call")}
+          onMutedAll={() => stopRecording()}
+          onInvited={() => {
+            if (typeof window !== 'undefined') {
+              void navigator.clipboard?.writeText(window.location.href);
+              alert('Đã sao chép liên kết phòng học vào bộ nhớ tạm!');
+            }
+          }}
+          onCam={() =>
+            alert('Phòng AI tối ưu băng thông cho Phụ đề giọng nói & Slide PDF (không phát luồng video camera).')
+          }
+          onEndCall={() => {
+            stopRecording();
+            router.push(
+              sessionId
+                ? `/giangvien/classroom/${encodeURIComponent(sessionId)}`
+                : '/giangvien/classroom',
+            );
+          }}
         />
       </footer>
     </div>

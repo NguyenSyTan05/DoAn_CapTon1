@@ -11,6 +11,7 @@ import {
   LuMenu,
   LuUsersRound,
 } from "react-icons/lu";
+import { Lock } from "lucide-react";
 import styles from "./dashboard.module.css";
 
 const NAV_ITEMS = [
@@ -30,6 +31,11 @@ const NAV_ITEMS = [
     label: "Quản lý danh sách lớp",
     href: "/admin/classes",
     icon: LuBookOpen,
+  },
+  {
+    label: "Đổi mật khẩu",
+    href: "/admin/password",
+    icon: Lock,
   },
 ];
 

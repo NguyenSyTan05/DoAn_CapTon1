@@ -17,7 +17,7 @@ GET /auth/sessions/<session_id>/access   (Authorization: Bearer <token>)
 
 from uuid import UUID
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -114,9 +114,13 @@ def get_session_access(session_id):
     if not allowed:
         return _error("session_forbidden", 403)
     # Chỉ báo "đã đóng" cho người có liên quan tới phiên (không lộ trạng thái cho người ngoài).
-    closed = str(session_row[0] or "").upper() in CLOSED_STATUSES
+    # Với allow_closed=1 (xem lại tóm tắt/phụ đề sau buổi học), cho phép phiên ENDED nhưng vẫn chặn CANCELLED.
+    status_upper = str(session_row[0] or "").upper()
+    allow_closed = request.args.get("allow_closed") in ("1", "true")
+    closed = status_upper in CLOSED_STATUSES
     if closed and access != "admin":
-        return _error("session_closed", 403)
+        if not (allow_closed and status_upper == "ENDED"):
+            return _error("session_closed", 403)
 
     return jsonify({
         "session_id": normalized_id,

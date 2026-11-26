@@ -28,6 +28,8 @@ class AnswerRecord:
     total_count: int
     answer_text: str
     answered_at: str  # ISO-8601 string, set by the caller (main.py)
+    answer_vi: str = ""
+    answer_en: str = ""
 
 
 class AnswerStore(ABC):

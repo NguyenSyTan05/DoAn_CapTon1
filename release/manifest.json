@@ -1,0 +1,27 @@
+{
+  "manifest_version": "1.0.0",
+  "project": "ClassBridge EMI Intelligent Classroom",
+  "models": {
+    "embedding": {
+      "name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "dimension": 384,
+      "clustering_threshold": 0.78,
+      "rag_min_confidence": 0.32
+    },
+    "translation": {
+      "name": "facebook/nllb-200-distilled-600M",
+      "languages": ["vie_Latn", "eng_Latn"]
+    },
+    "stt": {
+      "engine": "faster-whisper-ct2",
+      "sample_rate_hz": 16000,
+      "beam_size": 2,
+      "max_no_speech_prob": 0.85
+    }
+  },
+  "guardrails": {
+    "pii_masking_enabled": true,
+    "prompt_injection_filter_enabled": true,
+    "session_token_budget": 40000
+  }
+}

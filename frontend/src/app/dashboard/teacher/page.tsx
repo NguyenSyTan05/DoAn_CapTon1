@@ -693,12 +693,21 @@ export default function TeacherDashboard() {
         <nav className={styles.navigation}>
           <div className={styles.navSectionTitle}>{t.navWorkspace}</div>
 
-          <button className={`${styles.navItem} ${styles.navItemActive}`}>
+          <button
+            className={`${styles.navItem} ${styles.navItemActive}`}
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          >
             <span className={styles.navIcon}>▦</span>
             {t.navOverview}
           </button>
 
-          <button className={styles.navItem} onClick={() => setSearchTerm("")}>
+          <button
+            className={styles.navItem}
+            onClick={() => {
+              setSearchTerm("");
+              document.getElementById("topics")?.scrollIntoView({ behavior: "smooth" });
+            }}
+          >
             <span className={styles.navIcon}>?</span>
             {t.navQuestions}
             <span className={styles.navCount}>
@@ -706,7 +715,12 @@ export default function TeacherDashboard() {
             </span>
           </button>
 
-          <button className={styles.navItem}>
+          <button
+            className={styles.navItem}
+            onClick={() =>
+              document.getElementById("topics")?.scrollIntoView({ behavior: "smooth" })
+            }
+          >
             <span className={styles.navIcon}>◈</span>
             {t.navAiTopics}
             <span className={styles.navCount}>
@@ -714,7 +728,12 @@ export default function TeacherDashboard() {
             </span>
           </button>
 
-          <button className={styles.navItem}>
+          <button
+            className={styles.navItem}
+            onClick={() =>
+              document.getElementById("slide-analytics")?.scrollIntoView({ behavior: "smooth" })
+            }
+          >
             <span className={styles.navIcon}>▥</span>
             {t.navAnalytics}
           </button>
@@ -883,7 +902,7 @@ export default function TeacherDashboard() {
             CONTENT GRID
         ===================================================== */}
 
-        <section className={styles.contentGrid}>
+        <section id="topics" className={styles.contentGrid}>
           {/* TOPICS */}
 
           <div className={styles.topicsPanel}>
@@ -1225,7 +1244,7 @@ export default function TeacherDashboard() {
             )}
             {/* SLIDE ENGAGEMENT — đối chiếu timestamp câu hỏi với timestamp
                 chuyển slide (SlideViewer.tsx), tính sẵn ở backend */}
-            <div className={styles.slideChart}>
+            <div id="slide-analytics" className={styles.slideChart}>
               <div className={styles.slideChartHeader}>
                 <h3>{t.slideEngagementTitle}</h3>
                 <p>{t.slideEngagementDesc}</p>

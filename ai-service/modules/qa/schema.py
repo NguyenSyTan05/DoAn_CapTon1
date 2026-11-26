@@ -47,6 +47,8 @@ class AnswerOutput(BaseModel):
     total_count: int
     answer_text: str
     answered_at: str
+    answer_vi: str = ""
+    answer_en: str = ""
 
 
 class AnswerListResponse(BaseModel):

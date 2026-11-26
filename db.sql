@@ -637,6 +637,31 @@ CREATE INDEX idx_audit_logs_actor_admin ON audit_logs(admin_id, created_at DESC)
 CREATE INDEX idx_audit_logs_actor_lecturer ON audit_logs(lecturer_id, created_at DESC);
 CREATE INDEX idx_audit_logs_actor_student ON audit_logs(student_id, created_at DESC);
 CREATE INDEX idx_otp_contact_purpose ON otp_verifications(contact_value, purpose, created_at DESC);
+CREATE INDEX idx_questions_session_status ON questions(session_id, status, created_at DESC);
+CREATE INDEX idx_transcripts_session_lang ON transcripts(session_id, language, chunk_index);
+
+-- ---------------------------------------------------------------------
+-- 11B. AUTO-UPDATE `updated_at` TRIGGERS
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_admins_updated_at BEFORE UPDATE ON admins FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_lecturers_updated_at BEFORE UPDATE ON lecturers FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_students_updated_at BEFORE UPDATE ON students FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_classes_updated_at BEFORE UPDATE ON classes FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_class_schedules_updated_at BEFORE UPDATE ON class_schedules FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_lesson_summaries_updated_at BEFORE UPDATE ON lesson_summaries FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_student_notes_updated_at BEFORE UPDATE ON student_notes FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_question_groups_updated_at BEFORE UPDATE ON question_groups FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_answers_updated_at BEFORE UPDATE ON answers FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_chatbot_conversations_updated_at BEFORE UPDATE ON chatbot_conversations FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
+CREATE TRIGGER trg_session_statistics_updated_at BEFORE UPDATE ON session_statistics FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at();
 
 -- ---------------------------------------------------------------------
 -- 12. DASHBOARD VIEWS

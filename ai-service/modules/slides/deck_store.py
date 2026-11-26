@@ -1,17 +1,16 @@
 """
 deck_store.py (modules/slides)
 ================================
-[CUSTOM] Bộ slide (PDF) mà giảng viên chia sẻ trong MỘT phiên học: file PDF, tên file,
-phiên bản (tăng mỗi lần upload lại) và số trang hiện tại. Sinh viên tải file về và theo
-số trang qua WebSocket /api/v1/ws/slides.
-
-In-memory như các store khác (mất khi khởi động lại). Mỗi phiên tối đa MAX_PDF_BYTES và
-chỉ giữ MAX_DECKS bộ gần nhất (xem lifespan) để không phình bộ nhớ.
+Bộ slide (PDF) mà giảng viên chia sẻ trong MỘT phiên học: file PDF, tên file,
+phiên bản (tăng mỗi lần upload lại), số trang hiện tại và văn bản trích xuất
+từng trang (`slide_texts`) phục vụ Tóm tắt bài giảng AI & Chatbot Hỏi đáp RAG.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from modules.slides.pdf_extractor import extract_pdf_pages_text
 
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_DECKS = 10
@@ -23,6 +22,7 @@ class SlideDeck:
     filename: str = ""
     version: int = 0
     page: int = 1
+    slide_texts: dict[int, str] = field(default_factory=dict)
 
     @property
     def has_file(self) -> bool:
@@ -33,6 +33,7 @@ class SlideDeck:
         self.filename = filename
         self.version += 1
         self.page = 1
+        self.slide_texts = extract_pdf_pages_text(content)
 
     def set_page(self, page: int) -> None:
         self.page = max(1, page)
@@ -44,4 +45,5 @@ class SlideDeck:
             "filename": self.filename,
             "version": self.version,
             "page": self.page,
+            "extracted_pages": len(self.slide_texts),
         }

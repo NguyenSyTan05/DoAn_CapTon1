@@ -85,13 +85,11 @@ def get_admin_logs():
                 COALESCE(audit_logs.action, '') || ' ' ||
                 COALESCE(audit_logs.description, '') || ' ' ||
                 COALESCE(audit_logs.actor_role, '') || ' ' ||
-                COALESCE(audit_logs.actor_email, '') || ' ' ||
                 COALESCE(admin_actor.email, '') || ' ' ||
                 COALESCE(lecturer_actor.email, '') || ' ' ||
                 COALESCE(student_actor.email, '') || ' ' ||
                 COALESCE(audit_logs.entity_type, '') || ' ' ||
-                COALESCE(audit_logs.entity_name, '') || ' ' ||
-                COALESCE(audit_logs.session_id::text, '')
+                COALESCE(audit_logs.entity_id::text, '')
             ) LIKE :search
             """
         )
@@ -147,6 +145,7 @@ def get_admin_logs():
 
     items = []
     for row in rows:
+        import json as _json
         record = dict(row)
         created_at = record.get("created_at")
         action = record.get("action") or "Hệ thống"
@@ -157,13 +156,21 @@ def get_admin_logs():
             or record.get("role")
             or "system"
         )
+        # details JSONB may carry actor_email / entity_name / session_id
+        # (packed by fixed routes that couldn't store in non-existent columns).
+        details_obj: dict = {}
+        raw_details = record.get("details")
+        if raw_details:
+            try:
+                details_obj = _json.loads(raw_details) if isinstance(raw_details, str) else dict(raw_details)
+            except (ValueError, TypeError):
+                pass
         email_value = (
-            record.get("actor_email")
-            or record.get("user_email")
-            or record.get("email")
-            or record.get("admin_actor_email")
+            record.get("admin_actor_email")
             or record.get("lecturer_actor_email")
             or record.get("student_actor_email")
+            or details_obj.get("actor_email")
+            or details_obj.get("email")
             or str(actor_role)
         )
         user_value = (
@@ -175,12 +182,13 @@ def get_admin_logs():
         target_value = (
             record.get("entity_type")
             or record.get("target_type")
-            or record.get("entity_name")
+            or details_obj.get("entity_name")
+            or details_obj.get("class_name")
             or record.get("target")
             or "Hệ thống"
         )
         session_value = (
-            record.get("session_id")
+            details_obj.get("session_id")
             or record.get("session")
             or record.get("session_code")
             or "-"
@@ -197,7 +205,7 @@ def get_admin_logs():
                 "action": str(action),
                 "target": str(target_value),
                 "session": str(session_value),
-                "status": _status_label(record.get("status")),
+                "status": _status_label(details_obj.get("status") or record.get("status")),
                 "detail": str(description),
             }
         )

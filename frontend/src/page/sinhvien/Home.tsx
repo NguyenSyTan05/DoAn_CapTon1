@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@/lib/router-compat";
 import {
   Home,
@@ -17,10 +17,8 @@ import {
 import authService from "../../services/auth.service";
 import api from "../../services/api";
 import studentService from "../../services/student.service";
+import ChangePasswordCard from "../../components/shell/ChangePasswordCard";
 import styles from "./home.module.css";
-
-// Trang chủ sinh viên (giao diện lấy từ /sinhvien/app/home).
-// Các trang khác trong sidebar chưa được ghép nên tạm khóa.
 
 type ClassItem = {
   id: string;
@@ -30,34 +28,23 @@ type ClassItem = {
   status: "ongoing" | "upcoming";
   liveSession: { id: string; title: string; startedAt: string | null } | null;
   nextStartTime: string | null;
-  // Buổi đã lên lịch nhưng giảng viên chưa bấm bắt đầu -> vào "phòng chờ"
   nextSession: { id: string; title: string; startTime: string | null; endTime: string | null } | null;
 };
 
 type JoinScreen = "none" | "scanQr" | "enterCode";
+type SidebarSection = "home" | "my-class" | "live-lessons" | "question" | "setting";
 
-const NAV_ITEMS = [
-  { label: "Home", href: "/sinhvien", icon: Home, ready: true },
-  { label: "My class", href: "/my-class", icon: BookOpen, ready: false },
-  { label: "Live lessons", href: "/live-lession", icon: Radio, ready: false },
-  { label: "Question grouping", href: "/question", icon: MessageSquare, ready: false },
-  { label: "Lesson Summary", href: "/summary", icon: FileText, ready: false },
+const NAV_ITEMS: Array<{
+  id: SidebarSection | "summary";
+  label: string;
+  icon: typeof Home;
+}> = [
+  { id: "home", label: "Trang chủ", icon: Home },
+  { id: "my-class", label: "Lớp của tôi", icon: BookOpen },
+  { id: "live-lessons", label: "Buổi học trực tiếp", icon: Radio },
+  { id: "question", label: "Hỏi đáp Q&A", icon: MessageSquare },
+  { id: "summary", label: "Tóm tắt bài giảng", icon: FileText },
 ];
-
-const SETTING_NAV_ITEM = { label: "Setting", href: "/setting", icon: Settings, ready: false };
-
-const waitingText = (s: { startTime: string | null; endTime: string | null }) => {
-  if (!s.startTime) return "Đã lên lịch · chờ giảng viên bắt đầu";
-  const now = Date.now();
-  const start = new Date(s.startTime).getTime();
-  const end = s.endTime ? new Date(s.endTime).getTime() : Infinity;
-  const range = `${formatDateTime(s.startTime)}${s.endTime ? ` – ${formatDateTime(s.endTime)}` : ""}`;
-  return now >= start && now <= end
-    ? `Đã đến giờ (${range}) · chờ giảng viên bắt đầu`
-    : `Buổi tới: ${range}`;
-};
-
-const QR_NOTICE = "Tham gia bằng mã QR sẽ được bổ sung sau. Hiện bạn hãy dùng mã lớp.";
 
 const formatDateTime = (iso: string | null) =>
   iso
@@ -70,14 +57,38 @@ const formatDateTime = (iso: string | null) =>
       })
     : "";
 
+const waitingText = (s: { startTime: string | null; endTime: string | null }) => {
+  if (!s.startTime) return "Đã lên lịch · chờ giảng viên bắt đầu";
+  const now = Date.now();
+  const start = new Date(s.startTime).getTime();
+  const end = s.endTime ? new Date(s.endTime).getTime() : Infinity;
+  const range = `${formatDateTime(s.startTime)}${s.endTime ? ` – ${formatDateTime(s.endTime)}` : ""}`;
+  return now >= start && now <= end
+    ? `Đã đến giờ (${range}) · chờ giảng viên bắt đầu`
+    : `Buổi tới: ${range}`;
+};
+
+function extractClassCodeFromRaw(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const fromParam = parsed.searchParams.get("joinCode") || parsed.searchParams.get("code");
+    if (fromParam) return fromParam.trim().toUpperCase();
+  } catch {
+    /* chuỗi mã lớp thuần */
+  }
+  return trimmed.toUpperCase();
+}
+
 export default function StudentHome() {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  useLocation();
 
   const user = authService.getCurrentUser();
   const studentName: string = user?.full_name || "";
   const initial = studentName.trim().charAt(0).toUpperCase() || "?";
 
+  const [activeSection, setActiveSection] = useState<SidebarSection>("home");
   const [activeTab, setActiveTab] = useState<"ongoing" | "upcoming">("ongoing");
   const [joinScreen, setJoinScreen] = useState<JoinScreen>("none");
   const [classCodeInput, setClassCodeInput] = useState("");
@@ -87,6 +98,19 @@ export default function StudentHome() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [classesError, setClassesError] = useState("");
   const [classesNotice, setClassesNotice] = useState("");
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [subtitlePref, setSubtitlePref] = useState<"both" | "vi" | "en">("both");
+
+  // Camera quét QR trực tiếp bằng BarcodeDetector
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const qrStreamRef = useRef<MediaStream | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+
+  const stopQrCamera = useCallback(() => {
+    qrStreamRef.current?.getTracks().forEach((t) => t.stop());
+    qrStreamRef.current = null;
+    setCameraActive(false);
+  }, []);
 
   const loadClasses = useCallback(async () => {
     try {
@@ -97,35 +121,110 @@ export default function StudentHome() {
     }
   }, []);
 
+  const joinWithCodeString = useCallback(
+    async (rawCode: string) => {
+      const code = extractClassCodeFromRaw(rawCode);
+      if (!code || joining) return;
+      setJoining(true);
+      setJoinError("");
+      try {
+        const result = await studentService.joinClassByCode(code);
+        stopQrCamera();
+        setClassCodeInput("");
+        if (result.session?.id) {
+          navigate(`/room?session=${encodeURIComponent(result.session.id)}`);
+          return;
+        }
+        await loadClasses();
+        setActiveTab("upcoming");
+        setJoinScreen("none");
+        setClassesNotice(
+          `Đã tham gia lớp ${result.class?.name ?? code}. Hiện chưa có buổi học nào sắp diễn ra.`,
+        );
+      } catch (err: unknown) {
+        const msg =
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+          "Không thể tham gia lớp với mã này. Vui lòng kiểm tra lại.";
+        setJoinError(msg);
+      } finally {
+        setJoining(false);
+      }
+    },
+    [joining, loadClasses, navigate, stopQrCamera],
+  );
+
   useEffect(() => {
     void loadClasses();
+    const savedPref = localStorage.getItem("student_subtitle_pref");
+    if (savedPref === "both" || savedPref === "vi" || savedPref === "en") {
+      const t = window.setTimeout(() => setSubtitlePref(savedPref), 0);
+      return () => window.clearTimeout(t);
+    }
   }, [loadClasses]);
 
-  const handleJoinByCode = async () => {
-    const code = classCodeInput.trim();
-    if (!code || joining) return;
-    setJoining(true);
+  // Hỗ trợ quét QR từ camera điện thoại mở thẳng ?joinCode=MÃ_LỚP
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const joinParam = new URLSearchParams(window.location.search).get("joinCode");
+    if (joinParam) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, "", cleanUrl);
+      const t = window.setTimeout(() => {
+        void joinWithCodeString(joinParam);
+      }, 0);
+      return () => window.clearTimeout(t);
+    }
+  }, [joinWithCodeString]);
+
+  useEffect(() => {
+    return () => stopQrCamera();
+  }, [stopQrCamera]);
+
+  const startQrCamera = async () => {
+    setNotice("");
     setJoinError("");
     try {
-      const result = await studentService.joinClassByCode(code);
-      setClassCodeInput("");
-      if (result.session?.id) {
-        navigate(`/room?session=${encodeURIComponent(result.session.id)}`);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      qrStreamRef.current = stream;
+      setCameraActive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      const BarcodeDetectorCtor = (window as unknown as {
+        BarcodeDetector?: new (opts: { formats: string[] }) => {
+          detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+        };
+      }).BarcodeDetector;
+
+      if (!BarcodeDetectorCtor) {
+        setNotice(
+          "Trình duyệt này không hỗ trợ giải mã QR trực tiếp — hãy dán đường dẫn hoặc mã lớp vào ô bên dưới.",
+        );
         return;
       }
-      await loadClasses();
-      setActiveTab("upcoming");
-      setJoinScreen("none");
-      setClassesNotice(
-        `Đã tham gia lớp ${result.class?.name ?? ""}. Hiện chưa có buổi học nào sắp diễn ra.`,
-      );
-    } catch (err: any) {
-      setJoinError(
-        err.response?.data?.message ||
-          (err.response ? "Không thể tham gia lớp. Vui lòng thử lại." : "Không kết nối được máy chủ."),
-      );
-    } finally {
-      setJoining(false);
+
+      const detector = new BarcodeDetectorCtor({ formats: ["qr_code"] });
+      const scanLoop = async () => {
+        if (!qrStreamRef.current || !videoRef.current) return;
+        try {
+          const codes = await detector.detect(videoRef.current);
+          if (codes[0]?.rawValue) {
+            await joinWithCodeString(codes[0].rawValue);
+            return;
+          }
+        } catch {
+          /* tiếp tục quét */
+        }
+        if (qrStreamRef.current) {
+          requestAnimationFrame(() => void scanLoop());
+        }
+      };
+      requestAnimationFrame(() => void scanLoop());
+    } catch {
+      setNotice("Không mở được camera. Hãy cấp quyền camera hoặc nhập mã lớp ở ô bên dưới.");
     }
   };
 
@@ -135,7 +234,7 @@ export default function StudentHome() {
 
   const handleLogout = async () => {
     try {
-      await api.post("/auth/logout"); // ghi audit log, lỗi cũng bỏ qua
+      await api.post("/auth/logout");
     } catch {
       /* ignore */
     }
@@ -144,9 +243,22 @@ export default function StudentHome() {
   };
 
   const closeJoin = () => {
+    stopQrCamera();
     setNotice("");
     setJoinError("");
     setJoinScreen("none");
+  };
+
+  const handleSidebarClick = (id: SidebarSection | "summary") => {
+    if (id === "summary") {
+      navigate("/summary");
+      return;
+    }
+    setActiveSection(id);
+    if (id === "live-lessons") setActiveTab("ongoing");
+    if (id === "my-class") {
+      document.getElementById("my-classes-box")?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   if (joinScreen === "scanQr") {
@@ -156,24 +268,53 @@ export default function StudentHome() {
           <button className={styles.backButton} onClick={closeJoin}>
             <ArrowLeft size={18} /> Quay lại
           </button>
-          <h1 className={styles.joinScreenTitle}>Quét mã QR</h1>
-          <div className={styles.scanBox}>
+          <h1 className={styles.joinScreenTitle}>Quét mã QR lớp học</h1>
+          <div className={styles.scanBox} style={{ position: "relative", overflow: "hidden" }}>
             <span className={`${styles.scanCorner} ${styles.scanCornerTL}`} />
             <span className={`${styles.scanCorner} ${styles.scanCornerTR}`} />
             <span className={`${styles.scanCorner} ${styles.scanCornerBL}`} />
             <span className={`${styles.scanCorner} ${styles.scanCornerBR}`} />
+            {cameraActive ? (
+              <video
+                ref={videoRef}
+                muted
+                playsInline
+                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 12 }}
+              />
+            ) : (
+              <button
+                type="button"
+                className={styles.scanCameraCircle}
+                onClick={() => void startQrCamera()}
+                aria-label="Bật camera quét mã QR"
+                style={{ border: "none", cursor: "pointer" }}
+              >
+                <CameraIcon />
+              </button>
+            )}
+          </div>
+          <p className={styles.scanHint}>
+            {cameraActive ? "Đang quét mã QR từ màn chiếu giảng viên..." : "Bấm biểu tượng máy ảnh để bật camera quét QR"}
+          </p>
+          <div style={{ display: "flex", gap: 8, maxWidth: 360, width: "100%", marginTop: 12 }}>
+            <input
+              type="text"
+              placeholder="Hoặc dán link QR / mã lớp..."
+              value={classCodeInput}
+              onChange={(e) => setClassCodeInput(e.target.value)}
+              style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: "1px solid #cbd5e1" }}
+            />
             <button
               type="button"
-              className={styles.scanCameraCircle}
-              onClick={() => setNotice(QR_NOTICE)}
-              aria-label="Quét mã QR"
-              style={{ border: "none", cursor: "pointer" }}
+              className={styles.joinBtn}
+              disabled={!classCodeInput.trim() || joining}
+              onClick={() => void joinWithCodeString(classCodeInput)}
             >
-              <CameraIcon />
+              Vào lớp
             </button>
           </div>
-          <p className={styles.scanHint}>Đưa mã QR vào khung hình</p>
           {notice && <p className={styles.noticeText}>{notice}</p>}
+          {joinError && <p className={styles.errorText} role="alert">{joinError}</p>}
         </div>
       </div>
     );
@@ -211,8 +352,8 @@ export default function StudentHome() {
                   setClassCodeInput(e.target.value.toUpperCase());
                   setJoinError("");
                 }}
-                onKeyDown={(e) => e.key === "Enter" && handleJoinByCode()}
-                maxLength={30}
+                onKeyDown={(e) => e.key === "Enter" && void joinWithCodeString(classCodeInput)}
+                maxLength={80}
               />
             </div>
 
@@ -223,7 +364,7 @@ export default function StudentHome() {
               <button
                 className={styles.joinBtn}
                 disabled={!classCodeInput.trim() || joining}
-                onClick={handleJoinByCode}
+                onClick={() => void joinWithCodeString(classCodeInput)}
               >
                 {joining ? "Đang tham gia..." : "Tham gia"}
               </button>
@@ -249,9 +390,61 @@ export default function StudentHome() {
           </button>
         </div>
 
-        <div className={styles.topbarActions}>
-          <button className={styles.bellButton} aria-label="Thông báo">🔔</button>
-          <span className={styles.userLabel} title="Tài khoản đang đăng nhập">Sinh viên: {studentName || '—'}</span>
+        <div className={styles.topbarActions} style={{ position: "relative" }}>
+          <button
+            type="button"
+            className={styles.bellButton}
+            aria-label="Thông báo"
+            onClick={() => setShowNotifPanel((v) => !v)}
+          >
+            🔔{ongoingClasses.length > 0 ? ` (${ongoingClasses.length})` : ""}
+          </button>
+          {showNotifPanel && (
+            <div
+              style={{
+                position: "absolute",
+                top: "110%",
+                right: 120,
+                width: 290,
+                background: "#fff",
+                color: "#0f172a",
+                border: "1px solid #e2e8f0",
+                borderRadius: 12,
+                padding: 12,
+                boxShadow: "0 10px 25px rgba(15,23,42,0.12)",
+                zIndex: 40,
+              }}
+            >
+              <strong style={{ fontSize: 13 }}>Thông báo lớp học</strong>
+              {ongoingClasses.length === 0 ? (
+                <p style={{ margin: "8px 0 0", fontSize: 12.5, color: "#64748b" }}>
+                  Chưa có buổi học nào đang diễn ra trực tiếp.
+                </p>
+              ) : (
+                ongoingClasses.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #f1f5f9", fontSize: 12.5 }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{c.name}</div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        c.liveSession &&
+                        navigate(`/room?session=${encodeURIComponent(c.liveSession.id)}`)
+                      }
+                      style={{ marginTop: 4, background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}
+                    >
+                      Vào phòng ngay
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+          <span className={styles.userLabel} title="Tài khoản đang đăng nhập">
+            Sinh viên: {studentName || "—"}
+          </span>
           <div className={styles.avatar} title={studentName}>{initial}</div>
           <button className={styles.logoutBtn} onClick={handleLogout}>
             Đăng xuất
@@ -262,16 +455,12 @@ export default function StudentHome() {
       <div className={styles.body}>
         <aside className={styles.sidebar}>
           <nav className={styles.navMenu}>
-            {NAV_ITEMS.map(({ label, href, icon: Icon, ready }) => (
+            {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
               <button
-                key={href}
+                key={id}
                 type="button"
-                disabled={!ready}
-                title={ready ? undefined : "Sắp ra mắt"}
-                onClick={() => navigate(href)}
-                className={`${styles.navItem} ${pathname === href ? styles.navItemActive : ""} ${
-                  ready ? "" : styles.navItemDisabled
-                }`}
+                onClick={() => handleSidebarClick(id)}
+                className={`${styles.navItem} ${activeSection === id ? styles.navItemActive : ""}`}
               >
                 <Icon size={18} />
                 <span>{label}</span>
@@ -280,12 +469,11 @@ export default function StudentHome() {
             <div className={styles.sidebarDivider}>
               <button
                 type="button"
-                disabled={!SETTING_NAV_ITEM.ready}
-                title="Sắp ra mắt"
-                className={`${styles.navItem} ${styles.navItemDisabled}`}
+                onClick={() => setActiveSection("setting")}
+                className={`${styles.navItem} ${activeSection === "setting" ? styles.navItemActive : ""}`}
               >
-                <SETTING_NAV_ITEM.icon size={18} />
-                <span>{SETTING_NAV_ITEM.label}</span>
+                <Settings size={18} />
+                <span>Cài đặt</span>
               </button>
             </div>
           </nav>
@@ -294,8 +482,64 @@ export default function StudentHome() {
         <main className={styles.main}>
           <h1 className={styles.greetingTitle}>Xin chào, {studentName}!</h1>
           <p className={styles.greetingSubtitle}>
-            Tham gia lớp học để bắt đầu hành trình học tập cùng ClassBridge.
+            Tham gia lớp học để theo dõi phụ đề song ngữ, đặt câu hỏi ẩn danh và xem tóm tắt bài giảng AI.
           </p>
+
+          {activeSection === "setting" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 22 }}>
+              <div className={styles.classBox}>
+                <h2 className={styles.sectionTitle}>Cài đặt hiển thị học tập</h2>
+                <label style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14, marginTop: 10 }}>
+                  <span>Chế độ phụ đề ưu tiên:</span>
+                  <select
+                    value={subtitlePref}
+                    onChange={(e) => {
+                      const val = e.target.value as "both" | "vi" | "en";
+                      setSubtitlePref(val);
+                      localStorage.setItem("student_subtitle_pref", val);
+                    }}
+                    style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #cbd5e1" }}
+                  >
+                    <option value="both">Song ngữ Anh + Việt</option>
+                    <option value="vi">Ưu tiên Tiếng Việt</option>
+                    <option value="en">Ưu tiên Tiếng Anh</option>
+                  </select>
+                </label>
+              </div>
+
+              <ChangePasswordCard maxWidth="100%" />
+            </div>
+          )}
+
+          {activeSection === "question" && (
+            <div className={styles.classBox} style={{ marginBottom: 22 }}>
+              <h2 className={styles.sectionTitle}>Hỏi đáp ẩn danh & Câu hỏi nhanh</h2>
+              <p style={{ fontSize: 14, color: "#475569", margin: "6px 0 12px" }}>
+                Chọn một buổi học đang diễn ra để đặt câu hỏi ẩn danh trên di động/máy tính hoặc trả lời Quiz nhanh của giảng viên:
+              </p>
+              {ongoingClasses.length === 0 ? (
+                <p className={styles.emptyText}>Hiện chưa có lớp nào đang phát trực tiếp. Bạn vẫn có thể xem lại câu trả lời ở mục Tóm tắt bài giảng.</p>
+              ) : (
+                ongoingClasses.map((c) => (
+                  <div key={c.id} className={styles.classCard}>
+                    <div className={styles.classInfo}>
+                      <div className={styles.classTitle}>{c.code} - {c.name}</div>
+                      <div className={styles.classInstructor}>{c.liveSession?.title}</div>
+                    </div>
+                    {c.liveSession && (
+                      <button
+                        type="button"
+                        className={styles.joinClassBtn}
+                        onClick={() => navigate(`/sinhvien/classroom/${encodeURIComponent(c.liveSession!.id)}`)}
+                      >
+                        Mở Q&A & Quiz
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
 
           <h2 className={styles.sectionTitle}>Tham gia lớp học</h2>
           <div className={styles.joinGrid}>
@@ -304,7 +548,7 @@ export default function StudentHome() {
                 <CameraIcon />
               </span>
               <div className={styles.joinTitle}>Quét mã QR</div>
-              <div className={styles.joinSubtitle}>Dùng camera để quét mã lớp</div>
+              <div className={styles.joinSubtitle}>Dùng camera quét mã lớp từ màn chiếu</div>
             </button>
 
             <button className={styles.joinCard} onClick={() => setJoinScreen("enterCode")}>
@@ -316,9 +560,16 @@ export default function StudentHome() {
             </button>
           </div>
 
-          <div className={styles.classBox}>
-            <div className={styles.classBoxHeader}>
+          <div id="my-classes-box" className={styles.classBox}>
+            <div className={styles.classBoxHeader} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <h2 className={styles.sectionTitle}>Các lớp học của tôi</h2>
+              <button
+                type="button"
+                className={styles.joinClassBtn}
+                onClick={() => navigate("/summary")}
+              >
+                Xem Tóm tắt bài giảng AI
+              </button>
             </div>
 
             <div className={styles.tabs}>
@@ -341,7 +592,7 @@ export default function StudentHome() {
             {!classesError && visibleClasses.length === 0 && (
               <p className={styles.emptyText}>
                 {classes.length === 0
-                  ? "Bạn chưa tham gia lớp nào. Hãy nhập mã lớp do giảng viên cung cấp."
+                  ? "Bạn chưa tham gia lớp nào. Hãy nhập mã lớp hoặc quét mã QR do giảng viên cung cấp."
                   : "Không có lớp nào ở mục này."}
               </p>
             )}
@@ -372,13 +623,23 @@ export default function StudentHome() {
                   </button>
                 )}
                 {c.liveSession && (
-                  <button
-                    type="button"
-                    className={styles.joinClassBtn}
-                    onClick={() => navigate(`/room?session=${encodeURIComponent(c.liveSession!.id)}`)}
-                  >
-                    Vào lớp
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className={styles.joinClassBtn}
+                      onClick={() => navigate(`/room?session=${encodeURIComponent(c.liveSession!.id)}`)}
+                    >
+                      Vào lớp (PC)
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.joinClassBtn}
+                      style={{ background: "#0f766e" }}
+                      onClick={() => navigate(`/sinhvien/classroom/${encodeURIComponent(c.liveSession!.id)}`)}
+                    >
+                      Mobile & Quiz
+                    </button>
+                  </div>
                 )}
                 <span
                   className={c.status === "ongoing" ? styles.statusOngoing : styles.statusUpcoming}

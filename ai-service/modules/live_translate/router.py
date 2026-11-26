@@ -37,8 +37,9 @@ from typing import Any
 import numpy
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
+from core import auth as auth_core
 from core.ai import ai_service
-from core.auth import ANY_MEMBER, require_room_access
+from core.auth import ANY_MEMBER, require_room_access, verify_ws_access
 from core.session_scope import normalize_session, session_param
 from modules.live_translate.audio_utils import (
     TARGET_SAMPLE_RATE,
@@ -203,7 +204,10 @@ async def _process_utterance(
     task.add_done_callback(translations.discard)
 
 
-@router.get("/api/v1/transcripts", dependencies=[Depends(require_room_access(ANY_MEMBER))])
+@router.get(
+    "/api/v1/transcripts",
+    dependencies=[Depends(require_room_access(ANY_MEMBER, allow_closed=True))],
+)
 async def get_session_transcripts(
     session: str = Depends(session_param),
 ) -> dict[str, Any]:
@@ -240,7 +244,17 @@ async def live_translate(
         await websocket.close(code=1008)  # tham số sai định dạng
         return
 
-    is_lecturer = role == "lecturer" or (role is None and not session)
+    ws_access = await verify_ws_access(websocket, scope, ANY_MEMBER)
+    if ws_access is None:
+        await websocket.close(code=1008)  # thiếu hoặc sai quyền truy cập phòng
+        return
+
+    requested_lecturer = role == "lecturer" or (role is None and not session)
+    is_lecturer = (
+        requested_lecturer and ws_access.access == "lecturer"
+        if auth_core.settings.enabled
+        else requested_lecturer
+    )
     language = lang if lang in LANGS else "auto"
     rooms: RoomRegistry = websocket.app.state.live_rooms
     app_state = websocket.app.state

@@ -34,7 +34,7 @@ from typing import Callable, Iterable
 from urllib.parse import quote
 
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, WebSocket
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 try:  # starlette mới dùng httpx2 (kế nhiệm httpx, cùng API); vẫn chạy được với httpx cũ
@@ -225,8 +225,9 @@ class _AccessCache:
 _access_cache = _AccessCache()
 
 
-def _cache_key(user: AuthUser, session: str) -> tuple[str, str]:
-    return (f"jti:{user.jti}" if user.jti else f"sub:{user.sub}", session)
+def _cache_key(user: AuthUser, session: str, allow_closed: bool = False) -> tuple[str, str]:
+    scope_key = f"{session}:closed_ok" if allow_closed else session
+    return (f"jti:{user.jti}" if user.jti else f"sub:{user.sub}", scope_key)
 
 
 def _code(response) -> str | None:
@@ -237,9 +238,10 @@ def _code(response) -> str | None:
     return body.get("code") if isinstance(body, dict) else None
 
 
-async def fetch_room_access(user: AuthUser, session: str) -> str:
+async def fetch_room_access(user: AuthUser, session: str, *, allow_closed: bool = False) -> str:
     """Hỏi Flask quyền của `user` trong `session`. Trả về lecturer|student|admin hoặc ném HTTPException."""
-    url = f"{settings.flask_api_url}/auth/sessions/{quote(session, safe='')}/access"
+    suffix = "?allow_closed=1" if allow_closed else ""
+    url = f"{settings.flask_api_url}/auth/sessions/{quote(session, safe='')}/access{suffix}"
     try:
         async with httpx.AsyncClient(timeout=FLASK_TIMEOUT_S) as client:
             response = await client.get(url, headers={"Authorization": f"Bearer {user.token}"})
@@ -273,8 +275,8 @@ async def fetch_room_access(user: AuthUser, session: str) -> str:
     raise HTTPException(status_code=503, detail="Auth service unavailable")
 
 
-async def get_room_access(user: AuthUser, session: str) -> str:
-    key = _cache_key(user, session)
+async def get_room_access(user: AuthUser, session: str, *, allow_closed: bool = False) -> str:
+    key = _cache_key(user, session, allow_closed=allow_closed)
     cached = _access_cache.get(key)
     if isinstance(cached, HTTPException):
         raise HTTPException(status_code=cached.status_code, detail=cached.detail)
@@ -283,7 +285,7 @@ async def get_room_access(user: AuthUser, session: str) -> str:
 
     token_left = user.exp - time.time()  # không nhớ lâu hơn hạn của token
     try:
-        access = await fetch_room_access(user, session)
+        access = await fetch_room_access(user, session, allow_closed=allow_closed)
     except HTTPException as exc:
         if exc.status_code in (403, 404):
             _access_cache.put(key, exc, min(NEGATIVE_CACHE_TTL_S, token_left))
@@ -300,7 +302,9 @@ def is_uuid(value: str) -> bool:
     return True
 
 
-def require_room_access(allowed: Iterable[str] = ANY_MEMBER) -> Callable:
+def require_room_access(
+    allowed: Iterable[str] = ANY_MEMBER, *, allow_closed: bool = False
+) -> Callable:
     """Dependency factory: token hợp lệ + là thành viên phiên (`?session=`) với quyền thuộc `allowed`.
 
     Ở chế độ enforce, thiếu `?session=` (phạm vi mặc định "") hoặc session không phải UUID -> 422
@@ -321,9 +325,48 @@ def require_room_access(allowed: Iterable[str] = ANY_MEMBER) -> Callable:
             raise HTTPException(status_code=422, detail="session is required")
         if not is_uuid(session):
             raise HTTPException(status_code=422, detail="Invalid session id")
-        access = await get_room_access(user, session)
+        access = await get_room_access(user, session, allow_closed=allow_closed)
         if access not in allowed_set:
             raise HTTPException(status_code=403, detail={"code": "role_forbidden"})
         return RoomAccess(user=user, session=session, access=access)
 
     return dependency
+
+
+def _extract_ws_token(websocket: WebSocket) -> str | None:
+    token = websocket.query_params.get("token")
+    if token and token.strip():
+        return token.strip()
+    auth_header = websocket.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        candidate = auth_header[7:].strip()
+        if candidate:
+            return candidate
+    return None
+
+
+async def verify_ws_access(
+    websocket: WebSocket,
+    session: str,
+    allowed: Iterable[str] = ANY_MEMBER,
+    *,
+    allow_closed: bool = False,
+) -> RoomAccess | None:
+    """Xác thực JWT + quyền vào phòng cho kết nối WebSocket.
+    Khi AI_AUTH_MODE=off: luôn cho qua để tương thích test/dev cục bộ.
+    Khi AI_AUTH_MODE=enforce: trả về RoomAccess hợp lệ hoặc None nếu từ chối."""
+    if not settings.enabled:
+        return RoomAccess(user=_DEV_USER, session=session, access="admin")
+
+    allowed_set = frozenset(allowed)
+    raw_token = _extract_ws_token(websocket)
+    if not raw_token or session == DEFAULT_SCOPE or not is_uuid(session):
+        return None
+    try:
+        user = verify_token(raw_token)
+        access = await get_room_access(user, session, allow_closed=allow_closed)
+    except HTTPException:
+        return None
+    if access not in allowed_set:
+        return None
+    return RoomAccess(user=user, session=session, access=access)

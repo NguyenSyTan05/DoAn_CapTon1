@@ -58,17 +58,24 @@ def record_click():
             if actor_role != "SYSTEM" and actor_id is None:
                 actor_role = "SYSTEM"
 
+            # Pack actor_email / entity_name / status into details JSONB —
+            # those columns do not exist in audit_logs (see db.sql).
+            details_obj = json.loads(details)
+            details_obj["actor_email"] = actor_email
+            details_obj["entity_name"] = page
+            details_obj["status"] = "success"
+            details_full = json.dumps(details_obj, ensure_ascii=False)
+
             connection.execute(
                 text(
                     """
                     INSERT INTO audit_logs (
                         actor_role, admin_id, lecturer_id, student_id,
-                        action, entity_type, description, actor_email,
-                        entity_name, status, details, created_at
+                        action, entity_type, description, details, created_at
                     ) VALUES (
                         :actor_role, :admin_id, :lecturer_id, :student_id,
-                        'Click', 'ui_click', :description, :actor_email,
-                        :entity_name, 'success', CAST(:details AS jsonb), NOW()
+                        'Click', 'ui_click', :description,
+                        CAST(:details AS jsonb), NOW()
                     )
                     """
                 ),
@@ -78,9 +85,7 @@ def record_click():
                     "lecturer_id": actor_id if actor_role == "LECTURER" else None,
                     "student_id": actor_id if actor_role == "STUDENT" else None,
                     "description": f"Clicked {tag}" + (f": {label}" if label else ""),
-                    "actor_email": actor_email,
-                    "entity_name": page,
-                    "details": details,
+                    "details": details_full,
                 },
             )
     except Exception:

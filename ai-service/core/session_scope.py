@@ -17,6 +17,7 @@ WebSocket chưa kiểm tra (vẫn nhận phạm vi mặc định) — xem README
 from __future__ import annotations
 
 import re
+import uuid
 from collections import OrderedDict
 from typing import Callable, Generic, TypeVar
 
@@ -26,15 +27,25 @@ DEFAULT_SCOPE = ""
 MAX_SESSIONS = 200  # chặn bộ nhớ phình khi có người gửi session_id bừa
 
 _SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_HEX32_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 T = TypeVar("T")
 
 
 def normalize_session(raw: str | None) -> str | None:
-    """Trả về session hợp lệ, DEFAULT_SCOPE nếu không truyền, None nếu sai định dạng."""
+    """Trả về session hợp lệ (chuẩn hóa UUID về chữ thường có dấu gạch),
+    DEFAULT_SCOPE nếu không truyền, None nếu sai định dạng."""
     if raw is None or raw == "":
         return DEFAULT_SCOPE
-    return raw if _SESSION_RE.fullmatch(raw) else None
+    cleaned = raw.strip()
+    if not _SESSION_RE.fullmatch(cleaned):
+        return None
+    if "-" in cleaned or _HEX32_RE.fullmatch(cleaned):
+        try:
+            return str(uuid.UUID(cleaned))
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return cleaned
 
 
 def session_param(session: str | None = Query(None, description="session_id của phiên học")) -> str:
@@ -49,19 +60,28 @@ class SessionScoped(Generic[T]):
     """Tạo (lười) và giữ một đối tượng riêng cho mỗi session. Giữ tối đa MAX_SESSIONS
     phiên gần nhất; phạm vi mặc định không bao giờ bị loại."""
 
-    def __init__(self, factory: Callable[[], T], max_sessions: int = MAX_SESSIONS) -> None:
+    def __init__(
+        self,
+        factory: Callable[..., T],
+        max_sessions: int = MAX_SESSIONS,
+        *,
+        pass_session: bool = False,
+    ) -> None:
         self._factory = factory
         self._max = max_sessions
+        self._pass_session = pass_session
         self._items: "OrderedDict[str, T]" = OrderedDict()
 
     def get(self, session: str = DEFAULT_SCOPE) -> T:
-        item = self._items.get(session)
+        norm = normalize_session(session)
+        key = norm if norm is not None else session
+        item = self._items.get(key)
         if item is None:
-            item = self._factory()
-            self._items[session] = item
+            item = self._factory(key) if self._pass_session else self._factory()
+            self._items[key] = item
             self._evict()
         else:
-            self._items.move_to_end(session)
+            self._items.move_to_end(key)
         return item
 
     def _evict(self) -> None:

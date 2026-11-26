@@ -39,7 +39,34 @@ const registerAccount = async (registrationData) => {
   return res.data;
 };
 
-export default {
+const changePassword = async (currentPassword, newPassword, confirmPassword) => {
+  const res = await api.post("/auth/change-password", {
+    currentPassword,
+    newPassword,
+    confirmPassword,
+  });
+  return res.data;
+};
+
+const sendForgotPasswordVerification = async (email) => {
+  const res = await api.post("/auth/password/forgot/send", { email });
+  return res.data;
+};
+
+const verifyForgotPasswordCode = async (challengeId, selectedNumber) => {
+  const res = await api.post("/auth/password/forgot/verify", {
+    challengeId,
+    selectedNumber,
+  });
+  return res.data;
+};
+
+const resetForgotPassword = async (resetData) => {
+  const res = await api.post("/auth/password/forgot/reset", resetData);
+  return res.data;
+};
+
+const authService = {
   login,
   logout,
   getCurrentUser,
@@ -47,4 +74,10 @@ export default {
   sendRegistrationVerification,
   verifyRegistrationCode,
   registerAccount,
+  changePassword,
+  sendForgotPasswordVerification,
+  verifyForgotPasswordCode,
+  resetForgotPassword,
 };
+
+export default authService;

@@ -653,7 +653,7 @@ def upload_lecture_file(class_id, schedule_id):
                 "lecturer_id": lecturer_id,
                 "file_name": original_filename,
                 "original_file_name": original_filename,
-                "mime_type": mimetypes.guess_type(original_filename)[0],
+                "mime_type": mimetypes.guess_type(original_filename)[0] or "application/octet-stream",
                 "file_extension": extension.lstrip("."),
                 "file_size": len(file_data),
                 "file_data": file_data,

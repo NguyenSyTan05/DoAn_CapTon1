@@ -17,10 +17,12 @@ lecturer_classes_bp = importlib.import_module(
 ).lecturer_classes_bp
 
 from routes.login import login_bp
+from routes.password_management import password_management_bp
 from routes.register_account_student import register_account_bp
 from routes.student_classes import student_classes_bp, student_sessions_bp
 from routes.send_verification import send_verification_bp
 from routes.session_access import session_access_bp
+from routes.session_features import session_features_bp
 from routes.verify_verification import verify_verification_bp
 
 route_blueprints = (
@@ -38,8 +40,10 @@ route_blueprints = (
     giangvien_dashboard_bp,
     lecturer_classes_bp,
     login_bp,
+    password_management_bp,
     send_verification_bp,
     session_access_bp,
+    session_features_bp,
     verify_verification_bp,
     register_account_bp,
     student_classes_bp,

@@ -1,0 +1,22 @@
+title = "ClassBridge Secret Scanner Configuration"
+
+[allowlist]
+description = "Bỏ qua các tệp mẫu .env.example và thư mục build"
+paths = [
+  '''\.env\.example$''',
+  '''node_modules/''',
+  '''\.next/''',
+  '''\.venv/''',
+]
+
+[[rules]]
+id = "postgres-connection-uri"
+description = "Phát hiện chuỗi kết nối PostgreSQL / Neon chứa mật khẩu thật"
+regex = '''postgres(?:ql)?(?:\+psycopg2)?://[^:\s]+:[^@\s]{6,}@[^\s'"]+'''
+tags = ["database", "neon", "secret"]
+
+[[rules]]
+id = "jwt-or-flask-secret-key"
+description = "Phát hiện khóa ký JWT / SECRET_KEY gắn cứng"
+regex = '''(?i)(?:SECRET_KEY|JWT_SECRET_KEY)\s*=\s*['"]?[A-Za-z0-9_\-]{32,}['"]?'''
+tags = ["jwt", "auth"]

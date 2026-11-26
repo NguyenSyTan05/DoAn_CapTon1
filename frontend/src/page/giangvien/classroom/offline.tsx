@@ -4,6 +4,8 @@ import axios from "axios";
 import {
   ArrowLeft,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Expand,
   Loader2,
@@ -12,11 +14,13 @@ import {
   MicOff,
   Plus,
   Presentation,
+  Sparkles,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "@/lib/router-compat";
+import { aiFetch, aiWsUrl } from "../../../lib/ai";
 import api from "../../../services/api";
 import styles from "./offline.module.css";
 
@@ -63,17 +67,180 @@ export default function OfflineClassroomPage() {
   const [session, setSession] = useState<OfflineSession | null>(null);
   const [material, setMaterial] = useState<SessionMaterial | null>(null);
   const [previewSrc, setPreviewSrc] = useState("");
+  const [slidePage, setSlidePage] = useState(1);
   const [isLoading, setIsLoading] = useState(Boolean(sessionId));
   const [pageError, setPageError] = useState(
     sessionId ? "" : "Không có mã phiên học trong địa chỉ trang.",
   );
   const [languageDirection, setLanguageDirection] =
     useState<LanguageDirection>("vi-en");
-  const [showBilingual, setShowBilingual] = useState(false);
+  const [showBilingual, setShowBilingual] = useState(true);
   const [showExitMenu, setShowExitMenu] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
-  const [micNotice, setMicNotice] = useState(false);
   const [presentationError, setPresentationError] = useState("");
+
+  // Tích hợp thu âm thật & phụ đề song ngữ thời gian thực cho phòng Offline
+  const [isMicOn, setIsMicOn] = useState(false);
+  const [latestOriginal, setLatestOriginal] = useState("");
+  const [latestTranslated, setLatestTranslated] = useState("");
+  const wsRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const workletRef = useRef<AudioWorkletNode | null>(null);
+
+  const languageDirRef = useRef<LanguageDirection>("vi-en");
+
+  const stopRecording = useCallback(() => {
+    workletRef.current?.disconnect();
+    workletRef.current = null;
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ action: "end" }));
+    }
+    setIsMicOn(false);
+  }, []);
+
+  const toggleLanguageDirection = () => {
+    const nextDir: LanguageDirection = languageDirection === "vi-en" ? "en-vi" : "vi-en";
+    languageDirRef.current = nextDir;
+    setLanguageDirection(nextDir);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          action: "set_language",
+          language: nextDir === "vi-en" ? "vi" : "en",
+        }),
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (!active) return;
+      const spokenLang = languageDirRef.current === "vi-en" ? "vi" : "en";
+      ws = new WebSocket(
+        aiWsUrl("/api/v1/ws/live-translate", {
+          session: sessionId,
+          role: "lecturer",
+          fmt: "pcm32",
+          progressive: 1,
+          lang: spokenLang,
+        }),
+      );
+      ws.onopen = () => {
+        if (active && ws?.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              action: "set_language",
+              language: languageDirRef.current === "vi-en" ? "vi" : "en",
+            }),
+          );
+        }
+      };
+      ws.onmessage = (event) => {
+        if (!active) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "final") {
+            setLatestOriginal(msg.original_text || "");
+            setLatestTranslated("…");
+          } else if (msg.type === "translation") {
+            setLatestTranslated(msg.translated_text || "");
+          } else if (msg.type === "result") {
+            setLatestOriginal(msg.original_text || "");
+            setLatestTranslated(msg.translated_text || "");
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      ws.onclose = (ev) => {
+        if (!active || ev.code === 1008) return;
+        reconnectTimer = setTimeout(connect, 2000);
+      };
+      wsRef.current = ws;
+    };
+
+    connect();
+    return () => {
+      active = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      stopRecording();
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+    };
+  }, [sessionId, stopRecording]);
+
+  const toggleMic = async () => {
+    if (isMicOn) {
+      stopRecording();
+      return;
+    }
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: { ideal: 16000 },
+        },
+      });
+      try {
+        ctx = new AudioContext({ sampleRate: 16000 });
+      } catch {
+        ctx = new AudioContext();
+      }
+      const source = ctx.createMediaStreamSource(stream);
+      await ctx.audioWorklet.addModule("/pcm-processor.js");
+      if (ctx.state === "suspended") await ctx.resume();
+      const node = new AudioWorkletNode(ctx, "pcm-processor");
+      node.port.onmessage = (ev) => {
+        if (ev.data?.type === "pcm_data" && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(ev.data.buffer);
+        }
+      };
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      source.connect(node);
+      node.connect(mute);
+      mute.connect(ctx.destination);
+
+      streamRef.current = stream;
+      audioCtxRef.current = ctx;
+      workletRef.current = node;
+      setIsMicOn(true);
+      setShowBilingual(true);
+      setPageError("");
+    } catch {
+      stream?.getTracks().forEach((t) => t.stop());
+      ctx?.close().catch(() => {});
+      setPageError("Không bật được micro. Vui lòng cấp quyền truy cập micro trên trình duyệt.");
+    }
+  };
+
+  const changeSlidePage = (nextPage: number) => {
+    const clamped = Math.max(1, nextPage);
+    setSlidePage(clamped);
+    if (sessionId) {
+      void aiFetch(`/api/v1/slides/event?session=${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_number: clamped }),
+      }).catch(() => {});
+    }
+  };
 
   const startPresentation = async () => {
     const slideCanvas = document.querySelector<HTMLElement>(
@@ -160,6 +327,22 @@ export default function OfflineClassroomPage() {
         if (!active) return;
         objectUrl = URL.createObjectURL(data);
         setPreviewSrc(objectUrl);
+        if (
+          sessionId &&
+          data instanceof Blob &&
+          data.size > 0 &&
+          data.size <= 20 * 1024 * 1024 &&
+          material?.extension?.toLowerCase() === "pdf"
+        ) {
+          void aiFetch(`/api/v1/slides/file?session=${encodeURIComponent(sessionId)}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/pdf",
+              "x-filename": encodeURIComponent(material.fileName || "slides.pdf"),
+            },
+            body: data,
+          }).catch(() => {});
+        }
       })
       .catch((error: unknown) => {
         if (active) {
@@ -173,7 +356,7 @@ export default function OfflineClassroomPage() {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [material?.previewUrl]);
+  }, [material?.previewUrl, material?.extension, material?.fileName, sessionId]);
 
   const handleEndSession = async () => {
     if (
@@ -182,12 +365,13 @@ export default function OfflineClassroomPage() {
     ) {
       return;
     }
+    stopRecording();
     setIsEndingSession(true);
     try {
       await api.post(
         `/auth/lecturer/sessions/${encodeURIComponent(sessionId)}/end`,
       );
-      navigate("/giangvien/classroom", { replace: true });
+      navigate(`/giangvien/summary?session=${encodeURIComponent(sessionId)}`, { replace: true });
     } catch (error: unknown) {
       setPageError(errorMessage(error, "Không thể kết thúc buổi học."));
       setIsEndingSession(false);
@@ -202,8 +386,9 @@ export default function OfflineClassroomPage() {
     />
   ) : previewSrc ? (
     <iframe
+      key={slidePage}
       className={styles.slidePdf}
-      src={`${previewSrc}#page=1&toolbar=0&navpanes=0`}
+      src={`${previewSrc}#page=${slidePage}&toolbar=0&navpanes=0`}
       title={`Slide bài giảng: ${material?.fileName || ""}`}
     />
   ) : material?.firstSlide?.text ? (
@@ -231,9 +416,10 @@ export default function OfflineClassroomPage() {
         <button
           type="button"
           className={styles.backButton}
-          onClick={() =>
-            navigate(`/giangvien/classroom/${encodeURIComponent(sessionId || "")}`)
-          }
+          onClick={() => {
+            stopRecording();
+            navigate(`/giangvien/classroom/${encodeURIComponent(sessionId || "")}`);
+          }}
         >
           <ArrowLeft size={17} />
           <span>Rời phòng học</span>
@@ -284,13 +470,33 @@ export default function OfflineClassroomPage() {
               {material?.fileName || "Bài giảng"}
             </span>
             <div className={styles.presentationActions}>
-              <span className={styles.slideCount}>
-                {material?.firstSlide?.number
-                  ? `Slide ${material.firstSlide.number}`
-                  : material
-                    ? "Trang 1"
-                    : "Chưa có slide"}
-              </span>
+              {previewSrc && (
+                <>
+                  <button
+                    type="button"
+                    className={styles.presentButton}
+                    onClick={() => changeSlidePage(slidePage - 1)}
+                    disabled={slidePage <= 1}
+                    aria-label="Trang trước"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className={styles.slideCount}>Trang {slidePage}</span>
+                  <button
+                    type="button"
+                    className={styles.presentButton}
+                    onClick={() => changeSlidePage(slidePage + 1)}
+                    aria-label="Trang sau"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </>
+              )}
+              {!previewSrc && (
+                <span className={styles.slideCount}>
+                  {material ? "Trang 1" : "Chưa có slide"}
+                </span>
+              )}
               <button
                 type="button"
                 className={styles.presentButton}
@@ -317,15 +523,11 @@ export default function OfflineClassroomPage() {
             <section className={styles.subtitlePanel} aria-live="polite">
               <div className={styles.subtitleHeading}>
                 <span className={styles.subtitleLiveDot} />
-                <strong>Phụ đề song ngữ</strong>
+                <strong>Phụ đề song ngữ trực tiếp</strong>
                 <button
                   type="button"
                   className={styles.directionButton}
-                  onClick={() =>
-                    setLanguageDirection((current) =>
-                      current === "vi-en" ? "en-vi" : "vi-en",
-                    )
-                  }
+                  onClick={toggleLanguageDirection}
                 >
                   {languageDirection === "vi-en" ? "VI → EN" : "EN → VI"}
                   <ChevronDown size={14} />
@@ -334,18 +536,22 @@ export default function OfflineClassroomPage() {
               <div className={styles.bilingualText}>
                 <div>
                   <strong>
-                    {languageDirection === "vi-en" ? "Tiếng Việt" : "English"}
+                    {languageDirection === "vi-en" ? "Lời gốc (VI)" : "Original (EN)"}
                   </strong>
                   <p>
-                    Phụ đề gốc sẽ hiển thị tại đây khi tích hợp dịch vụ giọng nói.
+                    {latestOriginal ||
+                      (isMicOn
+                        ? "Đang lắng nghe lời giảng..."
+                        : "Bấm nút Mic để bắt đầu thu âm & phát phụ đề trực tiếp.")}
                   </p>
                 </div>
                 <div>
                   <strong>
-                    {languageDirection === "vi-en" ? "English" : "Tiếng Việt"}
+                    {languageDirection === "vi-en" ? "Bản dịch (EN)" : "Bản dịch (VI)"}
                   </strong>
                   <p>
-                    Bản dịch sẽ hiển thị tại đây khi tích hợp dịch vụ giọng nói.
+                    {latestTranslated ||
+                      "Bản dịch song ngữ sẽ hiển thị tức thì tại đây."}
                   </p>
                 </div>
               </div>
@@ -369,27 +575,36 @@ export default function OfflineClassroomPage() {
           <button
             type="button"
             className={styles.micSetupButton}
-            onClick={() => setMicNotice(true)}
+            onClick={() => void toggleMic()}
           >
-            <Mic size={17} />
-            Kết nối mic
-            <span>Chưa kết nối</span>
+            {isMicOn ? <Mic size={17} /> : <MicOff size={17} />}
+            {isMicOn ? "Đang thu âm trực tiếp" : "Kết nối mic"}
+            <span>{isMicOn ? "Đang bật" : "Chưa bật"}</span>
           </button>
-          {micNotice && (
-            <div className={styles.inlineNotice} role="status">
-              Thu âm và dịch trực tiếp sẽ được bật sau khi tích hợp backend.
-              Hiện tại trang chưa truy cập microphone.
-            </div>
-          )}
           <div className={styles.privacyNote}>
-            <MicOff size={15} />
-            Mic chưa thu âm. Nội dung lời giảng chưa được gửi hoặc lưu.
+            {isMicOn ? <Mic size={15} /> : <MicOff size={15} />}
+            {isMicOn
+              ? "Đang truyền âm thanh tới bộ nhận dạng STT & phát phụ đề cho cả lớp."
+              : "Mic đang tắt. Bấm để phát phụ đề trực tiếp cho sinh viên."}
           </div>
           {material && (
             <div className={styles.materialInfo}>
               <Presentation size={17} />
               <span>{material.fileName}</span>
             </div>
+          )}
+          {sessionId && (
+            <button
+              type="button"
+              className={styles.micSetupButton}
+              onClick={() =>
+                navigate(`/giangvien/summary?session=${encodeURIComponent(sessionId)}`)
+              }
+            >
+              <Sparkles size={17} />
+              Tóm tắt bài giảng
+              <span>AI</span>
+            </button>
           )}
         </aside>
       </section>
@@ -412,11 +627,11 @@ export default function OfflineClassroomPage() {
           <button
             type="button"
             className={styles.controlButton}
-            onClick={() => setMicNotice(true)}
+            onClick={() => void toggleMic()}
             aria-label="Microphone"
           >
-            <Mic size={20} />
-            <span>Mic</span>
+            {isMicOn ? <Mic size={20} color="#22c55e" /> : <MicOff size={20} />}
+            <span>{isMicOn ? "Tắt Mic" : "Bật Mic"}</span>
           </button>
         </div>
         <div className={styles.controlDivider} />
@@ -479,15 +694,16 @@ export default function OfflineClassroomPage() {
                   ) : (
                     <X size={16} />
                   )}
-                  Kết thúc lớp học
+                  Kết thúc & Xem Tóm tắt
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    stopRecording();
                     navigate(
                       `/giangvien/classroom/${encodeURIComponent(sessionId || "")}`,
-                    )
-                  }
+                    );
+                  }}
                 >
                   <ArrowLeft size={16} />
                   Rời khỏi lớp học
@@ -497,7 +713,6 @@ export default function OfflineClassroomPage() {
           </div>
         </div>
       </footer>
-
     </main>
   );
 }

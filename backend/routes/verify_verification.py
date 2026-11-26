@@ -1,15 +1,18 @@
 import smtplib
-import secrets
-import time
 
 from flask import Blueprint, current_app, jsonify, request
 
+from extensions import db
+from request_limits import request_limit_exceeded
 from verification_service import (
     challenge_ttl_seconds,
+    check_selected_number,
+    generate_number_choices,
+    load_otp_challenge,
+    mark_registration_verified,
+    rotate_wrong_otp_choice,
     send_verification_email,
-    verification_challenges,
 )
-from request_limits import request_limit_exceeded
 
 verify_verification_bp = Blueprint(
     "verify_verification", __name__, url_prefix="/auth/verification"
@@ -25,12 +28,11 @@ def verify_email_code():
         return jsonify({"message": "Invalid verification request."}), 400
     challenge_id = payload.get("challengeId")
     selected_number = payload.get("selectedNumber")
-    if not isinstance(challenge_id, str):
+    if not isinstance(challenge_id, str) or not challenge_id:
         return jsonify({"message": "Verification expired. Request a new email code."}), 400
-    challenge = verification_challenges.get(challenge_id)
 
-    if not challenge or time.monotonic() >= challenge["expires_at"]:
-        verification_challenges.pop(challenge_id, None)
+    challenge = load_otp_challenge(challenge_id, "REGISTER")
+    if not challenge:
         return jsonify({"message": "Verification expired. Request a new email code."}), 400
 
     if type(selected_number) is not int or selected_number not in challenge["choices"]:
@@ -39,14 +41,8 @@ def verify_email_code():
     if challenge.get("verified"):
         return jsonify({"verified": True}), 200
 
-    if selected_number != challenge["code"]:
-        new_code = secrets.randbelow(201) - 100
-        new_choices = [new_code]
-        while len(new_choices) < 4:
-            choice = secrets.randbelow(201) - 100
-            if choice not in new_choices:
-                new_choices.append(choice)
-        secrets.SystemRandom().shuffle(new_choices)
+    if not check_selected_number(challenge, selected_number):
+        new_code, new_choices = generate_number_choices()
 
         try:
             send_verification_email(challenge["email"], new_code)
@@ -61,11 +57,13 @@ def verify_email_code():
                 "message": "Could not resend the verification email. Please try again.",
             }), 503
 
-        challenge.update({
-            "code": new_code,
-            "choices": new_choices,
-            "expires_at": time.monotonic() + challenge_ttl_seconds,
-        })
+        try:
+            rotate_wrong_otp_choice(challenge_id, challenge, "REGISTER", new_code, new_choices)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to update registration OTP attempt")
+            return jsonify({"message": "Could not update verification challenge."}), 500
+
         return jsonify({
             "verified": False,
             "message": "That number did not match. A new verification number was emailed.",
@@ -73,5 +71,11 @@ def verify_email_code():
             "expiresIn": challenge_ttl_seconds,
         }), 200
 
-    challenge["verified"] = True
+    try:
+        mark_registration_verified(challenge_id, challenge)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to mark registration OTP as verified")
+        return jsonify({"message": "Could not verify email right now."}), 500
+
     return jsonify({"verified": True}), 200

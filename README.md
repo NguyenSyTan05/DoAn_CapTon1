@@ -1,275 +1,554 @@
-# ClassBridge — Hệ thống hỗ trợ lớp học song ngữ Anh–Việt (EMI)
+# ClassBridge
 
-Giảng viên nói → hệ thống nhận dạng giọng nói (STT), dịch Anh ↔ Việt và phát **phụ đề trực tiếp** cho sinh viên; đồng thời **chia sẻ slide** và thu thập **câu hỏi ẩn danh** để gom nhóm cho giảng viên.
+> **AI-powered bilingual (EN ↔ VI) classroom platform for EMI (English-Medium Instruction) courses.**
 
-Tài liệu chi tiết luồng đi của từng tính năng: [`docs/LuongSuKien_ClassBridge.docx`](docs/LuongSuKien_ClassBridge.docx).
-
----
-
-## 1. Kiến trúc
-
-| Thành phần | Thư mục | Công nghệ | Cổng |
-|---|---|---|---|
-| Frontend | `frontend/` | Next.js 16, React 19, TypeScript | **4000** |
-| Backend tài khoản & lớp học | `backend/` | Flask, JWT, SQLAlchemy, PostgreSQL (Neon) | **5000** |
-| Backend AI thời gian thực | `ai-service/` | FastAPI, faster-whisper (STT), NLLB-200 (dịch), MiniLM (gom nhóm) | **8000** |
-
-```
-Trình duyệt (Next.js :4000)
-   ├── REST + JWT ──────────────► Flask :5000 ──► PostgreSQL (tài khoản, lớp, phiên, thành viên, chat, audit)
-   └── REST + WebSocket ────────► FastAPI :8000   (phụ đề, hỏi đáp, slide — theo ?session=<session_id>, lưu trong RAM)
-```
-
-`session_id` (UUID của bảng `sessions` ở Flask) là chìa khóa nối hai backend: Flask biết ai thuộc lớp nào; FastAPI dùng nó để tách dữ liệu giữa các phòng học.
-
-### Tính năng chính
-- Đăng ký sinh viên 3 bước (xác thực email), đăng nhập theo vai trò (sinh viên / giảng viên / quản trị).
-- Giảng viên tạo lớp → hệ thống sinh sẵn các phiên học theo lịch và **mã lớp**.
-- Sinh viên nhập mã lớp để tham gia; vào **phòng chờ** nếu giảng viên chưa bắt đầu.
-- Phòng học `/room`: phụ đề song ngữ trực tiếp, slide PDF đồng bộ trang, hỏi đáp ẩn danh, popup câu trả lời.
-- Dashboard giảng viên: gom nhóm câu hỏi theo ngữ nghĩa, trả lời, biểu đồ tương tác theo slide.
-- Trang quản trị: tài khoản, lớp, nhật ký hoạt động, thống kê tương tác.
+ClassBridge provides live lecture transcription, real-time translation, semantic Q&A clustering, RAG-based chatbot, and a lesson-summary engine. Three roles are supported: **Admin**, **Giảng viên (Lecturer)**, and **Sinh viên (Student)**.
 
 ---
 
-## 2. Cấu trúc thư mục
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Prerequisites](#prerequisites)
+4. [Installation & Configuration](#installation--configuration)
+5. [Usage](#usage)
+6. [API Reference](#api-reference)
+7. [Troubleshooting](#troubleshooting)
+
+---
+
+## Overview
+
+| Feature | Description |
+|---------|-------------|
+| Live transcription | Whisper (CTranslate2) converts lecturer audio to text in real time |
+| EN ↔ VI translation | NLLB-200 (ctranslate2) translates every utterance bidirectionally |
+| Semantic Q&A clustering | MiniLM-L12-v2 embeds student questions; DBSCAN groups duplicates |
+| RAG chatbot | Students ask about slide content; MiniLM + Qdrant retrieves grounded answers |
+| Lesson summary | Hybrid extractive + optional LLM overview with comprehension heatmap |
+| Audit log | Every API request is recorded in `audit_logs` with actor role, IP, and JSONB details |
+
+### Tech Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Backend API | Python + Flask + Flask-JWT-Extended + Flask-SQLAlchemy | Python ≥ 3.11, Flask ≥ 3.0 |
+| AI Service | Python + FastAPI + Uvicorn | Python ≥ 3.11, FastAPI ≥ 0.115 |
+| Database | PostgreSQL | ≥ 15 |
+| Vector DB | Qdrant | ≥ 1.12 |
+| Whisper runtime | CTranslate2 | ≥ 4.x |
+| Translation | NLLB-200 via ctranslate2 | — |
+| Embedding | sentence-transformers MiniLM-L12-v2 | — |
+| Frontend | React + TypeScript | Node.js ≥ 18 |
+
+---
+
+## Architecture
+
+### Directory Tree
 
 ```
-finalDemo/
-├── backend/        Flask API (app.py, routes/, migrations/, requirements.txt, .env.example)
-├── ai-service/     FastAPI AI (main.py, modules/, core/, README.md, requirements.txt)
-├── frontend/       Next.js (src/app, src/page, src/components, src/lib, src/services)
-├── docs/           Tài liệu luồng sự kiện (.docx)
-├── db.sql          Lược đồ cơ sở dữ liệu đầy đủ (PostgreSQL 15+)
-└── frontend_vite_backup/   Bản frontend Vite cũ (chỉ để đối chiếu cục bộ, đã nằm trong .gitignore)
+DemoMidTerm-master/
+├── backend/                   # Flask REST API
+│   ├── app.py                 # Application factory, CORS, health probes
+│   ├── config.py              # Environment config (validated at import time)
+│   ├── extensions.py          # SQLAlchemy db instance
+│   ├── audit_service.py       # Per-request audit logging
+│   ├── request_limits.py      # In-process sliding-window rate limiter
+│   ├── verification_service.py# OTP & password-reset tokens
+│   ├── email_utils.py         # Email format + optional API validation
+│   ├── routes/
+│   │   ├── login.py           # POST /auth/login  POST /auth/logout
+│   │   ├── password_management.py  # Change / forgot / reset password
+│   │   ├── session_access.py  # Session join / leave
+│   │   └── ...                # Other route blueprints
+│   └── .env                   # Backend environment variables (not committed)
+│
+├── ai-service/                # FastAPI AI micro-service
+│   ├── main.py                # FastAPI app + router registration
+│   ├── core/
+│   │   ├── ai.py              # AiService singleton (loads all models)
+│   │   ├── auth.py            # JWT + room-access middleware
+│   │   ├── batcher.py         # DynamicBatcher (async embedding batching)
+│   │   ├── guardrails.py      # Prompt-injection sanitizer
+│   │   ├── governor.py        # 429/504 counters
+│   │   └── lifespan.py        # FastAPI startup/shutdown (model loading)
+│   ├── modules/
+│   │   ├── summary/           # Lesson summary generator
+│   │   ├── question_clustering/  # Semantic question aggregator
+│   │   ├── rag_chatbot/       # RAG chatbot (Qdrant + MiniLM)
+│   │   ├── live_translate/    # WebSocket live translation
+│   │   └── slides/            # Slide PDF extraction & heatmap
+│   ├── transcripts/           # Per-session JSONL transcript files
+│   └── .env                   # AI service environment variables (not committed)
+│
+├── frontend/                  # React + TypeScript SPA
+│   ├── src/
+│   └── package.json
+│
+└── db.sql                     # Complete PostgreSQL schema (25+ tables)
+```
+
+### Data Flow
+
+```
+Student (Browser)
+      │  HTTP/WS
+      ▼
+React Frontend (port 4000)
+      │  REST / WebSocket
+      ▼
+Flask Backend  (port 5000)
+  ├── JWT auth (HS256, shared SECRET_KEY)
+  ├── audit_logs  ──────────────────► PostgreSQL
+  └── Proxy AI requests
+              │  HTTP / WebSocket
+              ▼
+        FastAPI AI Service  (port 8000)
+          ├── Whisper  → transcript JSONL
+          ├── NLLB-200 → translated text
+          ├── MiniLM   → embeddings
+          └── Qdrant   → vector search  ◄──► Qdrant (port 6333)
 ```
 
 ---
 
-## 3. Yêu cầu
+## Prerequisites
 
-- **Python 3.11** (không dùng 3.13+ vì một số thư viện AI chưa hỗ trợ).
-- **Node.js 20+** và npm.
-- **PostgreSQL** (nhóm dùng chung một cơ sở dữ liệu Neon — xem mục 4.1).
-- Dung lượng trống vài GB: lần chạy AI đầu tiên tải model Whisper small, NLLB-200 (600M) và MiniLM.
-- (Tuỳ chọn) GPU NVIDIA có CUDA 12 + cuBLAS/cuDNN để STT nhanh hơn. Không có thì tự chạy CPU.
-- Trình duyệt **Chrome hoặc Edge** (cần micro và AudioWorklet).
+| Requirement | Minimum Version | Notes |
+|-------------|----------------|-------|
+| Python | 3.11 | Backend + AI service |
+| Node.js | 18 LTS | Frontend build |
+| PostgreSQL | 15 | With `pgcrypto` extension |
+| Docker | 24+ | Recommended for Qdrant; native install also works |
+| CUDA (optional) | 12.x | GPU acceleration for Whisper / NLLB |
+| Git | any | Source checkout |
+
+> **Note:** Whisper and NLLB-200 models are downloaded automatically on first run. Plan for ~3–5 GB of model storage.
 
 ---
 
-## 4. Cài đặt và cấu hình
+## Installation & Configuration
 
-### 4.1. Cơ sở dữ liệu
-**Cách A (khuyến nghị): dùng chung DB của nhóm.** Xin trưởng nhóm chuỗi `DATABASE_URL` qua kênh riêng (không gửi trong chat công khai, không commit lên GitHub).
+### 1. Clone & enter project root
 
-**Cách B: tự tạo DB mới** (PostgreSQL 15+): chạy `db.sql`, rồi lần lượt các file trong `backend/migrations/` (`001` → `004`; bỏ qua lỗi “đã tồn tại” nếu có). Sau đó tạo tài khoản giảng viên theo mục 6.3.
+```bash
+git clone <repo-url> classbridge
+cd classbridge/DemoMidTerm-master
+```
 
-### 4.2. Backend Flask (`backend/`)
-```powershell
+### 2. Start Qdrant (Docker)
+
+```bash
+docker compose up -d
+# or manually:
+docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
+```
+
+### 3. Create the PostgreSQL database
+
+```bash
+psql -U postgres -c "CREATE DATABASE classbridge;"
+psql -U postgres -d classbridge -f db.sql
+```
+
+### 4. Backend setup
+
+```bash
 cd backend
 python -m venv .venv
+# Windows
 .venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
-copy .env.example .env      # rồi điền giá trị vào .env
+cp .env.example .env   # then edit — see table below
 ```
-Các biến trong `backend/.env` (xem `.env.example`):
 
-| Biến | Ý nghĩa |
-|---|---|
-| `DATABASE_URL` | Chuỗi kết nối. **Phải dùng** `postgresql://…` hoặc `postgresql+psycopg2://…` (không dùng `+asyncpg`). |
-| `SECRET_KEY` | Khóa ký JWT, **bắt buộc, tối thiểu 32 ký tự**, mỗi người tự tạo (xem mục 4.5). Thiếu hoặc quá ngắn thì Flask không khởi động. |
-| `ADMIN_TOKEN_HOURS`, `LECTURER_TOKEN_HOURS`, `STUDENT_TOKEN_HOURS` | (Tuỳ chọn) Thời hạn token theo vai trò, mặc định 1 / 8 / 4 giờ. |
-| `FRONTEND_ORIGIN` | **Phải là `http://localhost:4000`** (mặc định của code là 5173 nên nếu quên sẽ bị lỗi CORS). |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | Gửi email xác thực khi đăng ký (xem `backend/SMTP_SETUP.md`). |
-| `EMAIL_VALIDATION_API_KEY` | Kiểm tra email có thật (xem `backend/EMAIL_VALIDATION.md`). |
+#### Backend `.env` variables
 
-> Chỉ **đăng ký sinh viên** mới cần SMTP và `EMAIL_VALIDATION_API_KEY`. Đăng nhập bằng tài khoản có sẵn thì không cần.
+| Variable | Required | Default | Example / Notes |
+|----------|----------|---------|-----------------|
+| `DATABASE_URL` | ✅ | — | `postgresql://postgres:secret@localhost:5432/classbridge` |
+| `SECRET_KEY` | ✅ | — | Min 32 chars. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `FRONTEND_ORIGIN` | — | `http://localhost:4000` | Comma-separated for multiple origins |
+| `ALLOW_LAN_ORIGINS` | — | `0` | Set `1` to allow RFC1918 LAN IPs (e.g. for mobile dev) |
+| `SMTP_HOST` | — | — | `smtp.gmail.com` |
+| `SMTP_PORT` | — | `587` | `587` (STARTTLS) or `465` (SSL) |
+| `SMTP_USERNAME` | — | — | Your SMTP login |
+| `SMTP_PASSWORD` | — | — | App-specific password recommended |
+| `SMTP_FROM` | — | — | `ClassBridge <noreply@example.com>` |
+| `SMTP_USE_TLS` | — | `true` | `true` / `false` |
+| `EMAIL_VALIDATION_API_KEY` | — | — | AbstractAPI key for real-time email validation |
+| `ADMIN_TOKEN_HOURS` | — | `1` | JWT lifetime for admin role (hours) |
+| `LECTURER_TOKEN_HOURS` | — | `8` | JWT lifetime for lecturer role (hours) |
+| `STUDENT_TOKEN_HOURS` | — | `4` | JWT lifetime for student role (hours) |
+| `LOG_LEVEL` | — | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 
-### 4.3. AI service FastAPI (`ai-service/`)
-```powershell
-cd ai-service
+### 5. AI Service setup
+
+```bash
+cd ../ai-service
 python -m venv .venv
+# Windows
 .venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
+# Verify PyJWT is installed (required for JWT middleware)
+python -c "import jwt; print(jwt.__version__)"
+cp .env.example .env   # then edit — see table below
 ```
-**Bắt buộc:** biến môi trường `SECRET_KEY` phải **giống hệt** `SECRET_KEY` trong `backend/.env` (xem mục 4.5). ai-service **không đọc file `.env`**, nên đặt trong terminal trước khi chạy (mục 5).
 
-Tuỳ chọn:
-- `WHISPER_MODEL_PATH=<thư mục model Whisper CT2>` để dùng model đã fine-tune thay cho `small` mặc định.
-- `FLASK_API_URL` (mặc định `http://127.0.0.1:5000`), `AI_ALLOWED_ORIGINS` (mặc định `http://localhost:4000`).
-- `AI_AUTH_MODE=off` chỉ để chạy test/debug không cần đăng nhập, **không dùng khi demo hay triển khai**.
+> **Important (Windows):** If `import jwt` fails, install it manually:
+> ```powershell
+> ai-service\.venv\Scripts\pip.exe install "PyJWT>=2.8,<3.0"
+> ```
 
-Chi tiết: `ai-service/README.md`.
+#### AI Service `.env` variables
 
-> Nếu cài `hdbscan` lỗi trên Windows, cài *Microsoft C++ Build Tools* hoặc tìm bản wheel phù hợp với Python 3.11.
+| Variable | Required | Default | Example / Notes |
+|----------|----------|---------|-----------------|
+| `SECRET_KEY` | ✅ | — | **Must match** backend `SECRET_KEY` exactly |
+| `FLASK_API_URL` | ✅ | — | `http://localhost:5000` |
+| `AI_AUTH_MODE` | — | `jwt` | `jwt` or `internal` |
+| `QDRANT_URL` | — | — | `http://localhost:6333` — omit to disable Qdrant |
+| `AI_STORAGE_BACKEND` | — | `local` | `local` or `s3` |
+| `SUMMARY_LLM_BASE_URL` | — | — | `http://127.0.0.1:11434/v1` (Ollama) for LLM-enhanced summaries |
+| `SUMMARY_LLM_MODEL` | — | `qwen2.5:7b` | Any OpenAI-compatible model name |
+| `SUMMARY_LLM_API_KEY` | — | `ollama` | API key for external LLM provider |
+| `LOG_LEVEL` | — | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 
-### 4.4. Frontend Next.js (`frontend/`)
-```powershell
-cd frontend
+### 6. Frontend setup
+
+```bash
+cd ../frontend
 npm install
-copy .env.example .env.local
+cp .env.example .env.local
+# Set VITE_API_URL=http://localhost:5000
+# Set VITE_AI_URL=http://localhost:8000
 ```
-`frontend/.env.local` (đều có mặc định, chỉ chỉnh khi cần):
 
-| Biến | Mặc định | Ý nghĩa |
-|---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | `http://127.0.0.1:5000` | Địa chỉ Flask |
-| `NEXT_PUBLIC_AI_URL` | `http://<host-đang-mở>:8000` | Địa chỉ FastAPI AI |
+---
 
-### 4.5. Khóa bí mật `SECRET_KEY` (quan trọng)
+## Usage
 
-**Mỗi thành viên tự tạo khóa riêng cho máy của mình. Không dùng chung khóa giữa các thành viên, không commit, không gửi qua chat.**
+### Development
 
-Lý do: mỗi người chạy Flask và ai-service trên máy mình. Flask ký token đăng nhập bằng `SECRET_KEY`, ai-service dùng đúng khóa đó để kiểm tra token. Vì vậy chỉ cần **hai tiến trình trên cùng một máy dùng cùng một giá trị**. Khóa của máy này không ảnh hưởng máy khác. Dùng chung DB Neon không có nghĩa là phải dùng chung khóa, vì khóa không được lưu trong DB.
+```bash
+# Terminal 1 — Backend
+cd backend && source .venv/bin/activate
+flask run --port 5000 --debug
 
-Tạo khóa ngẫu nhiên (chạy một lần cho mỗi máy):
-```powershell
+# Terminal 2 — AI Service
+cd ai-service && source .venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 3 — Frontend
+cd frontend && npm run dev
+```
+
+### Production
+
+```bash
+# Backend (Gunicorn — 4 sync workers)
+cd backend
+gunicorn -w 4 -b 0.0.0.0:5000 "app:app"
+
+# AI Service (Uvicorn — 2 workers; keep low due to in-memory model state)
+cd ai-service
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+
+# Frontend — build static assets, serve with Nginx / CDN
+cd frontend && npm run build
+```
+
+> **Important:** The backend rate-limiter is **process-local**. Under multi-worker Gunicorn, each worker maintains an independent counter. For production multi-worker deployments, replace with a Redis-backed limiter.
+
+### Testing
+
+```bash
+cd backend  && pytest tests/ -v
+cd ai-service && pytest tests/ -v
+cd frontend && npm run test
+```
+
+---
+
+## API Reference
+
+### Backend — Auth
+
+#### `POST /auth/login`
+
+**Request**
+```json
+{ "login": "user@example.com", "password": "s3cur3P@ss" }
+```
+
+**Response `200`**
+```json
+{
+  "success": true,
+  "access_token": "eyJ...",
+  "user": { "id": "uuid", "email": "user@example.com", "full_name": "Nguyễn Văn A", "role": "sinh_vien" }
+}
+```
+
+**Response `401`** `{ "success": false, "message": "Sai thông tin đăng nhập hoặc tài khoản chưa kích hoạt." }`
+
+---
+
+#### `POST /auth/logout`
+**Headers:** `Authorization: Bearer <token>`  
+**Response `200`** `{ "success": true, "message": "Đã đăng xuất." }`
+
+---
+
+#### `POST /auth/change-password`
+**Headers:** `Authorization: Bearer <token>`  
+**Request** `{ "current_password": "old", "new_password": "newStr0ng!" }`  
+**Response `200`** `{ "success": true, "message": "Mật khẩu đã được cập nhật." }`
+
+---
+
+#### `POST /auth/password/forgot/send`
+**Request** `{ "email": "user@example.com" }`  
+**Response `200`** `{ "success": true, "message": "OTP đã được gửi đến email." }`
+
+---
+
+#### `POST /auth/password/forgot/verify`
+**Request** `{ "email": "user@example.com", "otp": "1234" }`  
+**Response `200`** `{ "success": true, "reset_token": "uuid" }`
+
+---
+
+#### `POST /auth/password/forgot/reset`
+**Request** `{ "reset_token": "uuid", "new_password": "newStr0ng!" }`  
+**Response `200`** `{ "success": true, "message": "Mật khẩu đã được đặt lại thành công." }`
+
+---
+
+#### `GET /health` — Liveness probe  
+**Response `200`** `{ "status": "ok" }`
+
+#### `GET /ready` — Readiness probe (checks DB)  
+**Response `200`** `{ "status": "ready", "db": "ok" }`  
+**Response `503`** `{ "status": "not_ready", "db": "unreachable" }`
+
+---
+
+### AI Service — Summary
+
+#### `POST /api/summary/generate`
+**Headers:** `Authorization: Bearer <token>`
+
+**Request**
+```json
+{
+  "session_id": "uuid",
+  "lesson_title": "Deadlock & Starvation",
+  "lecturer_notes": "Nhấn mạnh ví dụ dining philosophers"
+}
+```
+
+**Response `200`** — `LessonSummaryRecord` with fields: `session_id`, `lesson_title`, `overview`, `overview_en`, `lecture_structure[]`, `key_concepts[]`, `vocabulary[]`, `examples[]`, `key_takeaways[]`, `further_clarification[]`, `heatmap[]`, `generation_status`, `updated_at`.
+
+---
+
+### AI Service — Q&A Clustering
+
+#### `POST /api/clustering/aggregate`
+
+**Request**
+```json
+{
+  "session_id": "uuid",
+  "questions": [
+    { "id": "q1", "text": "Deadlock là gì?", "timestamp": "00:12:30" },
+    { "id": "q2", "text": "Bế tắc xảy ra khi nào?", "timestamp": "00:12:45" }
+  ]
+}
+```
+
+**Response `200`**
+```json
+{
+  "clusters": [
+    { "representative_id": "q1", "representative_text": "Deadlock là gì?", "total_count": 2, "member_ids": ["q1","q2"] }
+  ]
+}
+```
+
+---
+
+### AI Service — RAG Chatbot
+
+#### `POST /api/chatbot/ask`
+
+**Request**
+```json
+{
+  "session_id": "uuid",
+  "question": "Điều kiện nào dẫn đến deadlock?",
+  "slide_texts": { "1": "...", "3": "..." },
+  "transcript_items": [{ "vi": "...", "en": "...", "timestamp": "00:05:00" }]
+}
+```
+
+**Response `200`**
+```json
+{
+  "message_id": "uuid",
+  "answer": "Dựa trên học liệu...\n• [Slide #3]: ...",
+  "status": "ANSWERED",
+  "confidence": 0.72,
+  "citations": [{ "label": "[Slide #3]", "source_type": "SLIDE", "slide_number": 3, "excerpt": "...", "score": 0.72 }],
+  "can_escalate": false
+}
+```
+
+---
+
+### AI Service — Live Translation (WebSocket)
+
+#### `WS /ws/live-translate/{session_id}`
+
+Send raw 16-bit PCM audio at 16 kHz mono (binary frames).  
+Receive JSON translation segments:
+```json
+{
+  "segment_id": "uuid",
+  "original_text": "Let's look at the first condition...",
+  "source_lang": "en",
+  "translated_text": "Hãy xem xét điều kiện đầu tiên...",
+  "timestamp": "00:03:17"
+}
+```
+
+---
+
+## Troubleshooting
+
+### `RuntimeError: DATABASE_URL is not set`
+**Fix:** Add `DATABASE_URL=postgresql://user:pass@localhost:5432/classbridge` to `backend/.env`.
+
+---
+
+### `RuntimeError: Thiếu hoặc SECRET_KEY quá ngắn`
+**Fix:**
+```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Paste output as SECRET_KEY in backend/.env AND ai-service/.env (must match)
 ```
-1. Dán kết quả vào `backend/.env`: `SECRET_KEY=<chuỗi vừa tạo>`.
-2. Mỗi lần mở terminal chạy ai-service, đặt cùng giá trị đó (mục 5).
-
-Lưu ý:
-- Tối thiểu 32 ký tự. Không đặt dấu ngoặc nhọn `<>` hay dấu cách thừa quanh giá trị; hai nơi phải giống nhau từng ký tự.
-- Đổi khóa thì mọi token cũ mất hiệu lực, phải **đăng nhập lại**.
-- **Ngoại lệ:** nếu cả nhóm cùng dùng *một* Flask hoặc *một* ai-service đã triển khai chung trên máy chủ, thì khóa của hai dịch vụ đó phải trùng nhau và do người quản trị máy chủ giữ, đặt bằng biến môi trường trên máy chủ, không để trong repo.
-- Khóa dễ đoán (ví dụ ghép từ tên dự án) cho phép ai biết nó tự tạo token quản trị. Khi demo công khai hoặc triển khai thật, luôn dùng khóa ngẫu nhiên như trên.
 
 ---
 
-## 5. Chạy hệ thống
+### `smtplib.SMTPAuthenticationError` on password-reset emails
+**Fix:** Use an app-specific password (Gmail → Account → Security → App passwords). Check `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_TLS` in `.env.email`.
 
-Mở **3 cửa sổ terminal** (đã kích hoạt `.venv` ở hai terminal Python):
+---
 
+### `RuntimeError: Qdrant vector dimension mismatch`
+**Fix:** Delete and recreate the collection:
+```bash
+curl -X DELETE http://localhost:6333/collections/classbridge_lecture_chunks
+# Restart ai-service — it recreates the collection automatically.
+```
+
+---
+
+### `ModuleNotFoundError: No module named 'ctranslate2'`
+**Fix:**
+```bash
+pip install ctranslate2           # CPU-only
+# CUDA 12:
+pip install ctranslate2 --extra-index-url https://download.pytorch.org/whl/cu121
+```
+
+---
+
+### Backend returns `500` after first login attempt
+**Cause:** `audit_logs` table missing or insufficient DB privileges.  
+**Fix:**
+```bash
+psql -U postgres -d classbridge -f db.sql
+psql -U postgres -d classbridge -c "GRANT INSERT ON audit_logs TO <app_user>;"
+```
+
+---
+
+### Rate-limit 429 hit immediately on dev machine
+**Fix:** Increase `MAX_REQUESTS` / `WINDOW_SECONDS` in `backend/request_limits.py` for local development, or ensure each client sends a distinct `X-Real-IP` header.
+
+---
+
+### `psycopg2.OperationalError: could not connect to server`
+**Fix:** Verify PostgreSQL is running and `DATABASE_URL` host/port/credentials are correct:
+```bash
+pg_ctl status -D /path/to/data   # Linux/macOS
+# Windows: check Services → postgresql-x64-15
+```
+
+---
+
+### `ModuleNotFoundError: No module named 'jwt'` (AI Service)
+**Cause:** `PyJWT` was not installed into the AI-service virtual environment even though it is in `requirements.txt`.  
+**Fix:**
 ```powershell
-# Terminal 1 — Flask (cổng 5000). Tự đọc SECRET_KEY từ backend/.env
-cd backend
-python app.py
-
-# Terminal 2 — AI (cổng 8000). Lần đầu tải model nên chờ vài phút
-# SECRET_KEY phải GIỐNG HỆT backend/.env (ai-service không đọc file .env)
-cd ai-service
-$env:SECRET_KEY = "<dán đúng chuỗi trong backend/.env, bỏ dấu <>>"
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-
-# Terminal 3 — Frontend (cổng 4000)
-cd frontend
-npm run dev
+# Windows — run from project root
+ai-service\.venv\Scripts\pip.exe install "PyJWT>=2.8,<3.0"
+# Then re-verify:
+ai-service\.venv\Scripts\python.exe -c "import jwt; print(jwt.__version__)"
 ```
-
-Kiểm tra nhanh:
-- Flask: <http://127.0.0.1:5000/> → `ClassBridge Backend is running`
-- AI: <http://localhost:8000/healthz> → `{"status":"ok"}`
-- Giao diện: **<http://localhost:4000>**
-
-> ⚠️ Mở giao diện bằng **`localhost`**, không dùng `127.0.0.1` (chế độ dev của Next.js chặn nguồn lạ nên trang sẽ không tương tác được).
+```bash
+# macOS / Linux
+ai-service/.venv/bin/pip install "PyJWT>=2.8,<3.0"
+```
 
 ---
 
-## 6. Tài khoản test
+### AI Service starts but `DynamicBatcher` worker never runs
+**Cause (historical):** `batcher.start()` was an `async` coroutine but was called without `await` in `core/lifespan.py` — the coroutine was silently dropped.  
+**Status:** ✅ Fixed in current codebase (`await batcher.start()` on line 72 of `core/lifespan.py`).  
+If you still see the symptom after a Git pull, verify: `grep -n "batcher.start" ai-service/core/lifespan.py` should show `await batcher.start()`.
 
-### 6.1. Giảng viên (dùng chung để test)
+---
 
-| | |
-|---|---|
-| Email | `teacher@gmail.com` |
-| Mật khẩu | `Teacher123@` |
-| Vai trò | Giảng viên (mã `GV-TEACHER01`) |
-
-> Tài khoản này nằm trong **cơ sở dữ liệu dùng chung của nhóm**. Chỉ dùng để test; không dùng mật khẩu này ở nơi khác. Nếu repo công khai, hãy đổi mật khẩu sau khi demo xong.
-
-### 6.2. Sinh viên
-- Tự đăng ký tại `/register` (3 bước, cần cấu hình SMTP ở mục 4.2), **hoặc**
-- Tạo trực tiếp trong DB theo mục 6.3.
-
-### 6.3. Tự tạo tài khoản trực tiếp trong DB (khi dùng DB mới hoặc chưa có SMTP)
-Tạo mã băm mật khẩu:
+### `start-all.ps1` — Flask starts with AI-service GPU Python (Windows)
+**Cause (historical):** The launcher used one `$PythonExe` for both services; it resolved to the AI-service `.venv` Python which may lack Flask deps.  
+**Status:** ✅ Fixed — `start-all.ps1` now uses `$BackendPythonExe` for Flask and `$AiPythonExe` for the AI service.  
+Override individual Pythons via environment variables before running:
 ```powershell
-cd backend
-python -c "from werkzeug.security import generate_password_hash as g; print(g('MatKhauCuaBan1!'))"
+$env:CLASSBRIDGE_BACKEND_PYTHON = "C:\Python311\python.exe"
+$env:CLASSBRIDGE_AI_PYTHON      = "D:\...\ai-service\.venv\Scripts\python.exe"
+.\start-all.ps1
 ```
-Rồi chạy SQL (thay `<HASH>`):
-```sql
--- Giảng viên
-INSERT INTO lecturers (lecturer_code, full_name, email, password_hash)
-VALUES ('GV-TEST01', 'Giảng viên Test', 'gv.test@example.com', '<HASH>');
-
--- Sinh viên (MSSV đúng 11 chữ số)
-INSERT INTO students (student_code, full_name, email, password_hash)
-VALUES ('12345678901', 'Sinh viên Test', 'sv.test@example.com', '<HASH>');
-```
-Mật khẩu nên có chữ hoa, chữ thường, số và ký tự đặc biệt.
 
 ---
 
-## 7. Kịch bản test end-to-end (làm theo thứ tự)
-
-> Dùng **hai trình duyệt khác nhau** (hoặc Chrome thường + cửa sổ ẩn danh): đăng nhập lưu ở `localStorage` nên hai tài khoản trong cùng một trình duyệt sẽ ghi đè lẫn nhau. Giao diện có nhãn “Giảng viên: …” / “Sinh viên: …” để nhận biết.
-
-1. **Giảng viên** (trình duyệt 1): vào `http://localhost:4000/login`, đăng nhập `teacher@gmail.com`. Vào **My Classes** (`/giangvien/classes`) → tạo lớp mới, **chọn lịch có buổi hôm nay**. Sao chép **mã lớp** (dạng `MÃMÔN-1A2B3C4D`).
-2. **Sinh viên** (trình duyệt 2): đăng nhập (hoặc đăng ký). Ở `/sinhvien` bấm **Nhập mã lớp**, dán mã → được đưa vào **phòng chờ** (banner vàng).
-3. **Giảng viên:** vào **Classroom** (`/giangvien/classroom`) → mở phiên hôm nay → bấm **Học online** (hoặc offline) để chuyển phiên sang `LIVE` → bấm **Mở phòng AI (phụ đề song ngữ)** (mở `/room?session=…`).
-4. **Sinh viên:** trong vài giây phòng chờ tự chuyển sang **Trực tiếp**.
-5. **Phụ đề:** giảng viên bấm nút **Mic một lần**, cho phép trình duyệt dùng micro, rồi nói. Sinh viên thấy lời gốc xuất hiện trước, bản dịch xuất hiện sau (cột EN/VI).
-6. **Slide:** giảng viên bấm **Upload PDF**, chọn file, bấm Next/Prev. Sinh viên thấy slide tự chuyển theo.
-7. **Hỏi đáp:** sinh viên gõ câu hỏi ở khung chat. Giảng viên bấm **Mở Dashboard Giảng Viên** → thấy nhóm câu hỏi → nhập câu trả lời → sinh viên nhận popup.
-8. **Kết thúc:** giảng viên bấm **Kết thúc phiên học** ở trang chi tiết phiên.
-
-Mỗi bước chi tiết (API nào được gọi, dữ liệu ghi ở đâu) có trong `docs/LuongSuKien_ClassBridge.docx`.
+### Upload slide returns `500` / `null value in column "mime_type"`
+**Cause (historical):** `mimetypes.guess_type()` returned `None` for some Office file extensions; the value was inserted directly into a NOT NULL column.  
+**Status:** ✅ Fixed — unknown MIME types now fall back to `application/octet-stream`.
 
 ---
 
-## 8. Kiểm thử tự động
-
-```powershell
-# ai-service (test tự đặt SECRET_KEY riêng, không cần chuẩn bị)
-cd ai-service
-pip install -r requirements-dev.txt
-python -m pytest -q          # khoảng 2 phút (nạp model thật)
-
-# Backend Flask (dùng SQLite trong bộ nhớ, không chạm DB Neon)
-cd backend
-pip install -r requirements-dev.txt
-python -m pytest tests -q
-```
-Frontend chưa có test tự động; kiểm tra bằng `npm run build` (có kiểm tra TypeScript).
+### `POST /auth/activity` returns `500` on every click event
+**Cause (historical):** `routes/activity.py` inserted into `audit_logs` with columns `actor_email`, `entity_name`, and `status` — which do not exist in the schema (see `db.sql`).  
+**Status:** ✅ Fixed — those values are now packed into the `details JSONB` column. The INSERT now only references real schema columns.
 
 ---
 
-## 9. Xử lý sự cố thường gặp
-
-| Triệu chứng | Nguyên nhân / cách xử lý |
-|---|---|
-| Flask báo `Thiếu hoặc SECRET_KEY quá ngắn` | `SECRET_KEY` trong `backend/.env` thiếu hoặc dưới 32 ký tự. Tạo khóa mới theo mục 4.5. |
-| ai-service báo `SECRET_KEY phải có ít nhất 32 ký tự` | Chưa đặt `$env:SECRET_KEY` trong terminal chạy ai-service (nó không đọc `.env`). Mỗi lần mở terminal mới phải đặt lại. |
-| Đăng nhập được nhưng phòng AI báo lỗi 401 / phiên hết hạn | `SECRET_KEY` của ai-service khác Flask, hoặc vừa đổi khóa mà chưa đăng nhập lại. Đặt cùng giá trị, khởi động lại cả hai, đăng nhập lại. |
-| `pip` báo `Fatal error in launcher` | `.venv` được copy từ máy khác. Xóa `.venv`, tạo lại bằng `python -m venv .venv`, cài bằng `python -m pip install -r requirements.txt`. |
-| Flask báo `Either 'SQLALCHEMY_DATABASE_URI' … must be set` | Chưa có `backend/.env` hoặc thiếu `DATABASE_URL`. |
-| Flask lỗi kết nối/`asyncpg` | `DATABASE_URL` đang dùng `postgresql+asyncpg://`. Đổi thành `postgresql+psycopg2://`. |
-| Trình duyệt báo CORS khi đăng nhập | `FRONTEND_ORIGIN` trong `backend/.env` chưa là `http://localhost:4000`, hoặc chưa khởi động lại Flask sau khi sửa. |
-| Trang không bấm được / nút không phản hồi | Đang mở bằng `127.0.0.1`. Dùng `http://localhost:4000`. |
-| Đăng ký sinh viên báo lỗi ở bước 2 | Thiếu cấu hình SMTP hoặc `EMAIL_VALIDATION_API_KEY`. |
-| Bấm Mic không có phụ đề | Trình duyệt chặn micro (kiểm tra biểu tượng ổ khóa); AI service chưa chạy hoặc đang tải model; nút Mic phải ở trạng thái “đang bật” sau khi bấm. |
-| Phụ đề trễ vài giây | Bình thường khi chạy CPU. Có GPU + cuBLAS sẽ nhanh hơn. Log AI có dòng `không dùng được cuda/float16` là hệ thống tự lùi về CPU. |
-| Sinh viên không thấy slide đổi trang / dữ liệu lẫn lộn | Có hai tiến trình cùng nghe cổng 8000. Tắt hết rồi chạy lại một AI service duy nhất. |
-| Thấy nút “Mute All”, “Dashboard Giảng Viên” khi đang là sinh viên | Trình duyệt đang đăng nhập bằng tài khoản giảng viên (dùng chung `localStorage`). Dùng trình duyệt/profile riêng cho mỗi vai trò. |
+### `POST /auth/student/classes/join` returns `500` after joining class
+**Cause (historical):** `routes/student_classes.py` `_audit()` inserted into `audit_logs` with columns `actor_email`, `entity_name`, and `status` — which do not exist in the schema.  
+**Status:** ✅ Fixed — email and class name are packed into `details JSONB`; INSERT uses only valid columns.
 
 ---
 
-## 10. Bảo mật khi đưa lên GitHub
-
-- **Không commit** `backend/.env`, `frontend/.env.local` (đã nằm trong `.gitignore`). Kiểm tra bằng `git status` trước khi push.
-- `SECRET_KEY` là bí mật của từng máy (mục 4.5). Nếu lỡ lộ, tạo khóa mới và đăng nhập lại.
-- README này có mật khẩu tài khoản test ở mục 6.1: chỉ chấp nhận được vì DB là riêng tư. Nếu lỡ lộ `DATABASE_URL`, hãy **đổi mật khẩu DB** trên Neon ngay.
-- Thư mục `frontend_vite_backup/` (≈ 265 MB) đã bị loại khỏi git.
-
----
-
-## 11. Giới hạn đã biết
-
-- **Xác thực ai-service mới làm cho REST**: các API REST theo phòng (hỏi đáp, slide, dịch, gom nhóm) đã yêu cầu token và kiểm tra quyền vào phiên qua Flask (`GET /auth/sessions/<id>/access`). **WebSocket** (`/ws/live-translate`, `/ws/qa`, `/ws/slides`) **chưa kiểm tra**, ai biết `session_id` vẫn nghe được phụ đề. Việc xác thực WebSocket là giai đoạn tiếp theo.
-- Mỗi phòng khác UUID hoa/thường hoặc bỏ dấu gạch có thể bị coi là phòng khác trong ai-service (lỗi đã biết, chưa sửa).
-- Dữ liệu của AI service (câu hỏi, câu trả lời, slide, lịch sử phụ đề) **nằm trong RAM**, mất khi khởi động lại.
-- **Chất lượng STT chưa chuẩn** (đặc biệt tiếng Việt và giọng có accent); chưa đo WER bằng dữ liệu lớp học thật. Có thể gắn model đã fine-tune qua `WHISPER_MODEL_PATH`.
-- Trạng thái phiên học (LIVE/ENDED) do giảng viên bấm, không tự đổi theo giờ.
-- Chưa có: tham gia bằng QR, giảng viên duyệt sinh viên, chia sẻ màn hình.
+### Admin logs page shows blank emails / "Hệ thống" for all entries
+**Cause (historical):** `routes/admin/ghilog.py` searched `audit_logs.actor_email`, `audit_logs.entity_name`, and `audit_logs.session_id` in its COALESCE filter — all non-existent columns that caused PostgreSQL errors on search.  
+**Status:** ✅ Fixed — search COALESCE now references only real columns; serializer falls back to joined-table emails (`admin_actor_email`, etc.) and reads `actor_email` / `class_name` from the `details JSONB` field when available.

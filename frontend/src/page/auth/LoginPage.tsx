@@ -15,26 +15,35 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Bị đẩy về /login?expired=1 khi token hết hạn
+  // Bị đẩy về /login?expired=1 khi token hết hạn hoặc /login?reset=1 sau khi đặt lại mật khẩu
   useEffect(() => {
-    // Đã đăng nhập và token còn hạn -> không bắt đăng nhập lại
     const session = getStoredSession();
     if (session) {
       navigate(session.home, { replace: true });
       return;
     }
-    clearExpiredSession(); // token cũ đã hết hạn -> dọn localStorage
+    clearExpiredSession();
 
-    if (new URLSearchParams(window.location.search).get("expired")) {
-      setError("Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.");
-    }
+    const params = new URLSearchParams(window.location.search);
+    const expiredFlag = params.get("expired");
+    const resetFlag = params.get("reset");
+    const timer = window.setTimeout(() => {
+      if (expiredFlag) {
+        setError("Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.");
+      } else if (resetFlag) {
+        setNotice("Đặt lại mật khẩu thành công! Vui lòng đăng nhập bằng mật khẩu mới.");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    setNotice("");
 
     if (!EMAIL_REGEX.test(email.trim())) {
       setError("Email chưa đúng định dạng, ví dụ student@gmail.com.");
@@ -51,7 +60,8 @@ export default function LoginPage() {
       const target = ROLE_HOME[data.user?.role];
       if (target) navigate(target, { replace: true });
       else setError("Tài khoản không hợp lệ.");
-    } catch (err: any) {
+    } catch (unknownErr) {
+      const err = unknownErr as { response?: { status?: number; data?: { code?: string } } };
       const status = err.response?.status;
       const code = err.response?.data?.code;
       if (code === "email_not_found") setError("Email này chưa được đăng ký.");
@@ -76,6 +86,24 @@ export default function LoginPage() {
             <h1>Chào mừng trở lại</h1>
             <p>Truy cập vào ClassBridge – AI của bạn</p>
           </div>
+
+          {notice && (
+            <div
+              role="status"
+              style={{
+                marginBottom: 16,
+                padding: "10px 14px",
+                borderRadius: 10,
+                background: "#ecfdf5",
+                border: "1px solid #a7f3d0",
+                color: "#047857",
+                fontSize: 13.5,
+                fontWeight: 500,
+              }}
+            >
+              {notice}
+            </div>
+          )}
 
           {error && (
             <div className={styles["error-box"]} role="alert">

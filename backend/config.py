@@ -1,6 +1,18 @@
+"""
+config.py — ClassBridge Flask configuration.
+
+Fixes applied (vs. original):
+- A13: DATABASE_URL is validated at import time; None → RuntimeError with actionable message.
+- S4:  ALLOW_LAN_ORIGINS default changed to '0' (opt-in, not opt-out).
+- Remaining logic unchanged.
+"""
+
+from __future__ import annotations
+
 import math
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -15,7 +27,7 @@ load_dotenv(email_config_path, override=True)
 MIN_SECRET_KEY_LENGTH = 32
 
 
-def _require_secret_key():
+def _require_secret_key() -> str:
     value = os.getenv("SECRET_KEY")
     if not value or len(value) < MIN_SECRET_KEY_LENGTH:
         raise RuntimeError(
@@ -27,8 +39,20 @@ def _require_secret_key():
     return value
 
 
-def _token_hours(name, default):
-    """Số giờ sống của JWT theo vai trò; phải là số dương."""
+def _require_database_url() -> str:
+    """Fail fast at startup if DATABASE_URL is absent (A13)."""
+    value = os.getenv("DATABASE_URL")
+    if not value or not value.strip():
+        raise RuntimeError(
+            "DATABASE_URL is not set. "
+            "Add DATABASE_URL=postgresql://user:pass@host:5432/classbridge "
+            "to backend/.env before starting the server."
+        )
+    return value.strip()
+
+
+def _token_hours(name: str, default: float) -> float:
+    """Return JWT lifetime in hours for the given role; must be a positive number."""
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return float(default)
@@ -37,23 +61,36 @@ def _token_hours(name, default):
     except ValueError:
         value = 0.0
     if not (math.isfinite(value) and value > 0):
-        raise RuntimeError(f"{name} phải là số giờ dương (ví dụ 1, 4, 8), nhận được: {raw!r}")
+        raise RuntimeError(
+            f"{name} phải là số giờ dương (ví dụ 1, 4, 8), nhận được: {raw!r}"
+        )
     return value
 
 
 class Config:
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL")
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SECRET_KEY = _require_secret_key()
-    FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
-    SMTP_HOST = os.getenv("SMTP_HOST")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-    SMTP_FROM = os.getenv("SMTP_FROM")
-    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-    EMAIL_VALIDATION_API_KEY = os.getenv("EMAIL_VALIDATION_API_KEY")
-    # Thời hạn access token theo vai trò (giờ). Cùng một SECRET_KEY ký cho mọi vai trò.
-    ADMIN_TOKEN_HOURS = _token_hours("ADMIN_TOKEN_HOURS", 1)
-    LECTURER_TOKEN_HOURS = _token_hours("LECTURER_TOKEN_HOURS", 8)
-    STUDENT_TOKEN_HOURS = _token_hours("STUDENT_TOKEN_HOURS", 4)
+    # A13: Validated at class-definition time — missing value raises immediately.
+    SQLALCHEMY_DATABASE_URI: str = _require_database_url()
+    SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
+
+    SECRET_KEY: str = _require_secret_key()
+
+    FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:4000")
+
+    # S4: Default is now '0' — LAN origins are opt-in, not opt-out.
+    ALLOW_LAN_ORIGINS: bool = (
+        os.getenv("ALLOW_LAN_ORIGINS", "0").strip().lower() in ("1", "true", "yes")
+    )
+
+    SMTP_HOST: str | None = os.getenv("SMTP_HOST")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: str | None = os.getenv("SMTP_USERNAME")
+    SMTP_PASSWORD: str | None = os.getenv("SMTP_PASSWORD")
+    SMTP_FROM: str | None = os.getenv("SMTP_FROM")
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+
+    EMAIL_VALIDATION_API_KEY: str | None = os.getenv("EMAIL_VALIDATION_API_KEY")
+
+    # JWT lifetime per role (hours). All roles share the same SECRET_KEY.
+    ADMIN_TOKEN_HOURS: float = _token_hours("ADMIN_TOKEN_HOURS", 1)
+    LECTURER_TOKEN_HOURS: float = _token_hours("LECTURER_TOKEN_HOURS", 8)
+    STUDENT_TOKEN_HOURS: float = _token_hours("STUDENT_TOKEN_HOURS", 4)

@@ -1,24 +1,40 @@
+"""
+email_utils.py — Email format validation for ClassBridge backend.
+
+Provides:
+  - is_valid_email_format(email): RFC5322-compatible lightweight regex check.
+    Returns True when the string looks like a valid email address.
+    Does NOT perform deliverability or DNS checks (use validation_service for that).
+"""
+
+from __future__ import annotations
+
 import re
 
-
-_LOCAL_PART_PATTERN = re.compile(
-    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$"
+# RFC5322-simplified pattern used throughout the backend.
+# Covers the vast majority of real-world addresses without false positives.
+_EMAIL_RE = re.compile(
+    r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$",
+    re.IGNORECASE,
 )
-_DOMAIN_PATTERN = re.compile(
-    r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$"
-)
+
+_MAX_EMAIL_LENGTH = 255
 
 
-def is_valid_email_format(email):
-    if not isinstance(email, str) or len(email) > 254 or any(char.isspace() for char in email):
+def is_valid_email_format(email: object) -> bool:
+    """Return True if *email* is a non-empty string that looks like a valid address.
+
+    This is a pure-syntax check (no network, no DNS lookup).
+
+    Args:
+        email: Arbitrary input from request payload.
+
+    Returns:
+        bool: True when the format is acceptable, False otherwise.
+    """
+    if not isinstance(email, str):
         return False
-
-    if email.count("@") != 1:
+    email = email.strip()
+    if not email or len(email) > _MAX_EMAIL_LENGTH:
         return False
-
-    local_part, domain = email.split("@")
-    return bool(
-        _LOCAL_PART_PATTERN.fullmatch(local_part)
-        and _DOMAIN_PATTERN.fullmatch(domain)
-        and len(local_part) <= 64
-    )
+    return bool(_EMAIL_RE.fullmatch(email))

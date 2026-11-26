@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Protocol, runtime_checkable
@@ -103,29 +105,22 @@ class CustomSemanticQuestionAggregator:
         batch_size: int = 32,
         clustering_strategy: Optional[ClusteringStrategy] = None,
         translator: Optional[BilingualTranslator] = None,
+        max_cache_size: int = 2048,
     ) -> None:
         self._model_name = model_name
         self._batch_size = batch_size
         self._device = device or self._select_device()
         self._translator = translator
+        self._max_cache_size = max(16, int(max_cache_size))
+        self._cache_lock = threading.Lock()
         # [DESIGN DECISION] default = proposed method (threshold graph,
         # default threshold 0.78). Swap this at construction time to run
         # the HDBSCAN baseline instead, for comparison experiments.
         self._clustering_strategy: ClusteringStrategy = (
             clustering_strategy or ThresholdGraphClustering(threshold=0.78)
         )
-        # [DESIGN DECISION — Giai đoạn 2 optimization] main.py's dashboard
-        # re-POSTs the FULL question list on every "Refresh" (stateless,
-        # full-batch API — see architecture.md). Without this cache, every
-        # already-processed question would be re-translated and re-encoded
-        # on every refresh, even though embedding is the most expensive
-        # stage (see TimingBreakdown). Keyed by question id, storing the
-        # exact text it was computed from so a (hypothetical, currently
-        # unsupported) edited question can't silently reuse a stale vector.
-        # Grows unboundedly for the lifetime of this instance — acceptable
-        # for a single classroom session's question volume; not meant for
-        # a long-lived multi-session server process.
-        self._embedding_cache: dict[str, tuple[str, np.ndarray]] = {}
+        # Bộ nhớ đệm nhúng vector giới hạn kích thước LRU (an toàn đa luồng)
+        self._embedding_cache: OrderedDict[str, tuple[str, np.ndarray]] = OrderedDict()
 
         logger.info(
             "Loading embedding model '%s' on device '%s' (clustering strategy: %s)...",
@@ -147,10 +142,14 @@ class CustomSemanticQuestionAggregator:
                 f"Embedding model initialization failed for '{model_name}': {exc}"
             ) from exc
 
-        self._embedding_dim = self._model.get_sentence_embedding_dimension()
+        self._embedding_dim: int = int(self._model.get_sentence_embedding_dimension() or 384)
         logger.info(
             "Model loaded on '%s'. Embedding dimension: %d", self._device, self._embedding_dim
         )
+
+    @property
+    def embedding_model(self):
+        return self._model
 
     @staticmethod
     def _select_device() -> str:
@@ -399,10 +398,15 @@ class CustomSemanticQuestionAggregator:
         # same text — see _embedding_cache in __init__.
         t0 = time.perf_counter()
         uncached_indices: list[int] = []
-        for i, q in enumerate(questions):
-            cached = self._embedding_cache.get(q.id)
-            if cached is None or cached[0] != q.text:
-                uncached_indices.append(i)
+        cached_vectors: dict[str, np.ndarray] = {}
+        with self._cache_lock:
+            for i, q in enumerate(questions):
+                cached = self._embedding_cache.get(q.id)
+                if cached is not None and cached[0] == q.text:
+                    self._embedding_cache.move_to_end(q.id)
+                    cached_vectors[q.id] = cached[1]
+                else:
+                    uncached_indices.append(i)
         canonical_texts = [self._to_bilingual_text(questions[i].text) for i in uncached_indices]
         timing.translation_ms = (time.perf_counter() - t0) * 1000
 
@@ -410,9 +414,16 @@ class CustomSemanticQuestionAggregator:
         if canonical_texts:
             raw_embeddings = self.encode_questions(canonical_texts)
             new_embeddings = self.normalize_embeddings(raw_embeddings)
-            for local_idx, i in enumerate(uncached_indices):
-                self._embedding_cache[questions[i].id] = (questions[i].text, new_embeddings[local_idx])
-        embeddings = np.stack([self._embedding_cache[q.id][1] for q in questions])
+            with self._cache_lock:
+                for local_idx, i in enumerate(uncached_indices):
+                    qid = questions[i].id
+                    vec = new_embeddings[local_idx]
+                    self._embedding_cache[qid] = (questions[i].text, vec)
+                    self._embedding_cache.move_to_end(qid)
+                    cached_vectors[qid] = vec
+                while len(self._embedding_cache) > self._max_cache_size:
+                    self._embedding_cache.popitem(last=False)
+        embeddings = np.stack([cached_vectors[q.id] for q in questions])
         timing.embedding_ms = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
