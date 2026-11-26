@@ -40,7 +40,7 @@ export function aiHttp(): string {
   // Vercel deploy: nếu chưa cấu hình env var, dùng tunnel URL mặc định
   if (!configured) {
     if (pageHost.includes("vercel.app") || pageHost.includes("vercel.sh")) {
-      return "https://loaded-solomon-tip-cod.trycloudflare.com";
+      return "https://anymore-eyed-resistance-tuesday.trycloudflare.com";
     }
     return `${window.location.protocol}//${pageHost}:8000`;
   }
