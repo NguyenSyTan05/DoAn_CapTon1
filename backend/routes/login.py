@@ -101,7 +101,7 @@ def _record_audit_event(
                 INSERT INTO audit_logs (
                     actor_role, action, entity_type, description, details, created_at
                 ) VALUES (
-                    :actor_role, :action, :entity_type, :description, :details::jsonb, NOW()
+                    :actor_role, :action, :entity_type, :description, CAST(:details AS jsonb), NOW()
                 )
                 """
             ),

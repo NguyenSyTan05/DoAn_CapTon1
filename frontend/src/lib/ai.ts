@@ -37,7 +37,11 @@ export function aiHttp(): string {
     return configured || "http://localhost:8000";
   }
   const pageHost = window.location.hostname;
+  // Vercel deploy: nếu chưa cấu hình env var, dùng tunnel URL mặc định
   if (!configured) {
+    if (pageHost.includes("vercel.app") || pageHost.includes("vercel.sh")) {
+      return "https://loaded-solomon-tip-cod.trycloudflare.com";
+    }
     return `${window.location.protocol}//${pageHost}:8000`;
   }
   try {

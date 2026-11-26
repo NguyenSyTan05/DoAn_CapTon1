@@ -34,7 +34,11 @@ function resolveApiBaseUrl() {
     return configured || "http://127.0.0.1:5000";
   }
   const pageHost = window.location.hostname;
+  // Vercel deploy: nếu chưa cấu hình env var, dùng tunnel URL mặc định
   if (!configured) {
+    if (pageHost.includes("vercel.app") || pageHost.includes("vercel.sh")) {
+      return "https://loaded-solomon-tip-cod.trycloudflare.com";
+    }
     return `${window.location.protocol}//${pageHost}:5000`;
   }
   try {
