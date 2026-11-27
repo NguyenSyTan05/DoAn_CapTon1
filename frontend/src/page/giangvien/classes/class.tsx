@@ -400,7 +400,7 @@ export default function ClassManagement() {
             : status === 403
               ? "Tài khoản hiện tại không có quyền tạo lớp giảng viên. Vui lòng đăng nhập bằng tài khoản giảng viên."
               : status === null
-                ? "Không kết nối được backend. Hãy kiểm tra server tại http://127.0.0.1:5000."
+                ? "Không kết nối được máy chủ backend. Vui lòng kiểm tra kết nối mạng hoặc backend đang chạy."
                 : "Không thể lưu lớp học. Vui lòng thử lại.";
       alert(message);
     } finally {

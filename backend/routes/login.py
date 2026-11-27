@@ -12,6 +12,7 @@ Fixes applied (B1-B3, P1, S1, S3):
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import timedelta
 from typing import Any
@@ -93,24 +94,44 @@ def _record_audit_event(
 ) -> bool:
     """Write one row to audit_logs.  Never raises — returns False on failure."""
     audit_role = _AUDIT_ROLE_MAP.get(actor_role, "SYSTEM")
-    fk_col = _AUDIT_FK_COL.get(actor_role)
+    actor_uuid = str(actor_id) if actor_id else None
+    if audit_role != "SYSTEM" and not actor_uuid:
+        audit_role = "SYSTEM"
+    details_payload = json.dumps(
+        {
+            "status": status,
+            "actor_id": actor_uuid,
+            "entity_name": entity_name,
+        },
+        ensure_ascii=False,
+    )
     try:
         db.session.execute(
             text(
                 """
                 INSERT INTO audit_logs (
-                    actor_role, action, entity_type, description, details, created_at
+                    actor_role, admin_id, lecturer_id, student_id,
+                    action, entity_type, entity_id, description, details, created_at
                 ) VALUES (
-                    :actor_role, :action, :entity_type, :description, CAST(:details AS jsonb), NOW()
+                    :actor_role,
+                    CAST(:admin_id AS uuid),
+                    CAST(:lecturer_id AS uuid),
+                    CAST(:student_id AS uuid),
+                    :action, :entity_type, CAST(:entity_id AS uuid),
+                    :description, CAST(:details AS jsonb), NOW()
                 )
                 """
             ),
             {
                 "actor_role":  audit_role,
+                "admin_id":    actor_uuid if audit_role == "ADMIN" else None,
+                "lecturer_id": actor_uuid if audit_role == "LECTURER" else None,
+                "student_id":  actor_uuid if audit_role == "STUDENT" else None,
                 "action":      action,
                 "entity_type": entity_type,
+                "entity_id":   actor_uuid,
                 "description": description,
-                "details":     f'{{"status": "{status}", "actor_id": "{actor_id}", "entity_name": "{entity_name}"}}',
+                "details":     details_payload,
             },
         )
         db.session.commit()

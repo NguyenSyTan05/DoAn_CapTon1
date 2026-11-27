@@ -1,6 +1,15 @@
 import axios from "axios";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const DEFAULT_CLOUD_GATEWAY = "https://your-talk-between-beach.trycloudflare.com";
+
+function isTempTryCloudflare(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().endsWith(".trycloudflare.com");
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Tự động ánh xạ địa chỉ Flask sang IP mạng LAN khi sinh viên mở web từ điện thoại
@@ -34,11 +43,13 @@ function resolveApiBaseUrl() {
     return configured || "http://127.0.0.1:5000";
   }
   const pageHost = window.location.hostname;
-  // Vercel deploy: nếu chưa cấu hình env var, dùng tunnel URL mặc định
+  const isVercelHost = pageHost.includes("vercel.app") || pageHost.includes("vercel.sh");
+  // Vercel deploy: nếu chưa cấu hình env var hoặc env var còn lưu URL trycloudflare tạm thời cũ,
+  // luôn dùng DEFAULT_CLOUD_GATEWAY mới nhất để tránh gọi vào tunnel đã tắt.
+  if (isVercelHost && (!configured || isTempTryCloudflare(configured))) {
+    return DEFAULT_CLOUD_GATEWAY;
+  }
   if (!configured) {
-    if (pageHost.includes("vercel.app") || pageHost.includes("vercel.sh")) {
-      return "https://your-talk-between-beach.trycloudflare.com";
-    }
     return `${window.location.protocol}//${pageHost}:5000`;
   }
   try {
