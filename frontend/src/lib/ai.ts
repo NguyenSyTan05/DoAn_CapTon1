@@ -8,7 +8,7 @@
  */
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
-const DEFAULT_CLOUD_GATEWAY = "https://your-talk-between-beach.trycloudflare.com";
+const DEFAULT_CLOUD_GATEWAY = "https://uses-heights-hints-bath.trycloudflare.com";
 
 function isTempTryCloudflare(url: string): boolean {
   try {
