@@ -59,33 +59,46 @@ _ARTIFACTS = (
     "subscribe", "la la school", "like and share", "like and subscribe", "dang ky kenh",
     "đăng ký kênh", "hãy đăng ký kênh", "đừng quên đăng ký", "hen gap lai", "hẹn gặp lại",
     "chia se video", "subtitles by", "captioned by", "transcribed by", "translated by",
-    "để không bỏ lỡ", "bấm chuông", "nhấn chuông", "amara.org", "đón xem video", "xem video này",
-    "video tiếp theo", "kênh youtube", "phụ đề được thực hiện bởi", "người dịch", "biên tập viên",
+    "để không bỏ lỡ", "bấm chuông", "nhấn chuông", "amara.org", "đón xem video",
+    "kênh youtube", "phụ đề được thực hiện bởi",
     "cảm ơn các bạn đã đón xem", "cảm ơn các bạn đã xem", "cảm ơn các bạn đã theo dõi",
     "cám ơn các bạn đã theo dõi", "cảm ơn các bạn đã lắng nghe", "cảm ơn quý vị và các bạn",
     "cảm ơn mọi người đã xem", "cám ơn các bạn, tạm biệt", "cảm ơn các bạn, tạm biệt",
-    "xin chào và hẹn gặp lại", "xin chào tạm biệt", "chào tạm biệt", "tạm biệt các bạn",
-    "bye bye, tạm biệt", "bài giảng đại học bằng tiếng việt", "bài giảng và hội thoại tiếng việt",
+    "xin chào và hẹn gặp lại", "xin chào tạm biệt", "chào tạm biệt", "bye bye, tạm biệt",
+    "bài giảng đại học bằng tiếng việt", "bài giảng và hội thoại tiếng việt",
     "nội dung bài giảng và thảo luận trên lớp học", "thảo luận trên lớp học bằng tiếng việt",
     "đầy đủ dấu thanh điệu", "dấu câu rõ ràng từng từ ngữ", "ghiền mì gõ", "fap tv",
     "storm meeting done", "thank you for listening", "thanks for listening",
     "subscribe to my channel", "please subscribe", "don't forget to subscribe",
     "see you in the next video", "mbc news", "sbs news", "kbs news",
-    # Whisper ảo giác khi nhìn slide/màn hình trong phòng học
-    "picture", "image", "photo", "video",
 )
 
+# Cụm có thể là lời giảng thật ("hãy xem video này", "người dịch", "tạm biệt các bạn"):
+# CHỈ chặn khi độ tin cậy thấp, giống _SILENCE_PHRASES.
+_WEAK_ARTIFACTS = (
+    "xem video này", "video tiếp theo", "người dịch", "biên tập viên", "tạm biệt các bạn",
+)
+
+# Whisper ảo giác 1 từ khi nhìn slide/màn hình. Chỉ chặn khi CẢ CÂU là đúng từ đó;
+# tránh mất câu thật như "Today we process an image with a CNN" hay "In this video lecture...".
+_STANDALONE_ARTIFACT_WORDS = {"picture", "image", "photo", "video", "pictures", "images", "photos", "videos"}
+
 # Mẫu câu cố định / câu "học vẹt" Whisper hay tự bịa khi không nói (im lặng, tiếng thở, tạp âm):
-# Chặn TUYỆT ĐỐI nếu cả câu chỉ khớp đúng mẫu này (không phụ thuộc no_speech_prob/avg_logprob).
-# Câu giảng thật dài hơn (VD: "Cảm ơn em đã hỏi về deadlock") vẫn được giữ nguyên.
 _BLOCKED_STANDALONE_PHRASES = {
-    "thank you", "thanks", "thank you so much", "thank you very much", "thanks a lot",
-    "thanks for watching", "thank you for watching", "thank you for listening",
-    "thanks for listening", "bye", "bye bye", "bye now", "goodbye", "bye guys", "bye son",
-    "you", "you know", "i'm not", "i am not", "i see the light", "i'm coming", "i am coming",
-    "i'm cold", "i'm single", "i know", "that is so", "big way", "big big way",
-    "welcome back", "see you next time", "see you later", "the end", "storm meeting done",
+    "i'm not", "i am not", "i see the light", "i'm coming", "i am coming",
+    "i'm cold", "i'm single", "that is so", "big way", "big big way",
+    "welcome back", "the end", "storm meeting done",
     "music", "silence", "applause", "laughter", "watching", "subtitles",
+    "thanks for watching", "thank you for watching", "thank you for listening", "thanks for listening",
+}
+
+# Lời chào, cảm ơn, tạm biệt và từ phản hồi siêu ngắn: giảng viên nói thật ở đầu/cuối buổi
+# nên KHÔNG chặn tuyệt đối; chỉ chặn khi độ tin cậy thấp.
+_SILENCE_PHRASES = {
+    "yeah", "yes", "no", "ok", "okay", "all right", "alright", "vâng", "dạ",
+    "thank you", "thanks", "thank you so much", "thank you very much", "thanks a lot",
+    "bye", "bye bye", "bye now", "goodbye", "bye guys", "bye son",
+    "you", "you know", "i know", "see you next time", "see you later",
     "uh", "um", "hmm", "hm", "oh", "ah", "so", "hey",
     "cảm ơn", "cám ơn", "cam on", "cảm ơn các bạn", "cám ơn các bạn", "cam on cac ban",
     "cảm ơn các bạn rất nhiều", "cám ơn các bạn rất nhiều", "rất cảm ơn các bạn",
@@ -96,12 +109,6 @@ _BLOCKED_STANDALONE_PHRASES = {
     "cảm ơn nhiều", "cám ơn nhiều",
     "tạm biệt", "tam biet", "tạm biệt các bạn", "xin chào", "xin chao",
     "xin chào các bạn", "xin chào tất cả các bạn", "chào các bạn",
-}
-
-# Từ phản hồi siêu ngắn có thể là lời thật ("ok", "yes", "dạ", "vâng"):
-# chỉ chặn khi độ tin cậy thấp.
-_SILENCE_PHRASES = {
-    "yeah", "yes", "no", "ok", "okay", "all right", "alright", "vâng", "dạ",
 }
 
 # Ảo giác tiếng Latin/Romance ngoại lai (Bồ Đào Nha, Pháp, Tây Ban Nha, Ý, Indonesia...)
@@ -296,8 +303,13 @@ def is_hallucination(
         if detected_lang not in (None, "en", "vi") and not has_vi_specific:
             return True
 
+    low_confidence = no_speech_prob > NO_SPEECH_LIMIT or avg_logprob < LOGPROB_LIMIT
+    if bare in _STANDALONE_ARTIFACT_WORDS:
+        return True
     if bare in _SILENCE_PHRASES:
-        return no_speech_prob > NO_SPEECH_LIMIT or avg_logprob < LOGPROB_LIMIT
+        return low_confidence
+    if low_confidence and any(a in normalized for a in _WEAK_ARTIFACTS):
+        return True
     return False
 
 
@@ -341,9 +353,9 @@ def finalize_text(text: str) -> str:
     """Chuỗi chuẩn hoá hiển thị dùng sau khi STT: dọn ký tự + khử lặp + loại từ ảo giác cuối câu."""
     s = remove_repeated_phrases(clean_transcript_text(text))
     # Xoá từ ảo giác Whisper thêm vào cuối (VD: "...cloud architecture. Picture.")
-    # Chỉ xoá nếu từ cuối cùng là artifact đứng riêng (< 3 từ trong câu cuối)
+    # Chỉ xoá khi nó là một CÂU riêng ở cuối (đứng sau dấu chấm), không xoá từ cuối của câu thật
     _TRAILING_NOISE = re.compile(
-        r"(?:[.!?]\s+|\s+)(?:picture|image|photo|video|music|silence|applause|laughter)[.!?]?\s*$",
+        r"(?<=[.!?])\s+(?:picture|image|photo|video|music|silence|applause|laughter)[.!?]?\s*$",
         re.IGNORECASE,
     )
     s = _TRAILING_NOISE.sub("", s).rstrip(" ,;")

@@ -26,8 +26,10 @@ Chưa xác thực: ai biết session_id đều vào được (xem README).
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
+import os
 import re
 import time
 import wave
@@ -67,23 +69,28 @@ router = APIRouter()
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_QUEUE = 8  # đủ chứa các mệnh đề liên tiếp của giảng viên mà không rớt câu
 LANGS = {"auto", "vi", "en"}
+# Ghi âm giọng giảng viên để đối chiếu/đo WER: MẶC ĐỊNH TẮT (quyền riêng tư + dung lượng đĩa).
+# Bật bằng STT_SAVE_AUDIO=1. Ghi nối đuôi PCM16 (chi phí O(1)).
+_seg_counter = itertools.count(1)
 _RECORDINGS_DIR = Path(__file__).resolve().parents[2] / "transcripts" / "recordings"
+
+
+def _save_audio_enabled() -> bool:
+    return os.getenv("STT_SAVE_AUDIO") == "1"
 
 
 def _safe_session_name(session: str | None) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", session or "default")[:80] or "default"
 
 
-def _save_utterance_wav(session: str, segment_id: int, audio: numpy.ndarray) -> str | None:
-    """Lưu file WAV 16kHz mono của từng câu nói và nối vào file ghi âm toàn buổi học."""
+def _save_utterance_wav(session: str, audio: numpy.ndarray) -> str | None:
+    """Lưu WAV 16 kHz mono của một câu nói (tên duy nhất) và nối PCM16 thô vào file cả buổi."""
     try:
         safe = _safe_session_name(session)
         sess_dir = _RECORDINGS_DIR / safe
         sess_dir.mkdir(parents=True, exist_ok=True)
-        seg_path = sess_dir / f"seg_{segment_id:04d}.wav"
-        full_path = _RECORDINGS_DIR / f"{safe}_full_lecture.wav"
+        seg_path = sess_dir / f"seg_{int(time.time())}_{next(_seg_counter):06d}.wav"
 
-        # Lưu bản đã khuếch đại nhẹ để nghe lại và đối chiếu Google STT rõ ràng
         norm_audio = preprocess_audio_for_stt(audio)
         pcm16 = numpy.clip(norm_audio * 32767.0, -32768, 32767).astype(numpy.int16).tobytes()
 
@@ -93,21 +100,8 @@ def _save_utterance_wav(session: str, segment_id: int, audio: numpy.ndarray) -> 
             wf.setframerate(TARGET_SAMPLE_RATE)
             wf.writeframes(pcm16)
 
-        # Nối thêm vào file ghi âm tổng của cả buổi học
-        if not full_path.is_file():
-            with wave.open(str(full_path), "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(TARGET_SAMPLE_RATE)
-                wf.writeframes(pcm16)
-        else:
-            with wave.open(str(full_path), "rb") as rf:
-                old_frames = rf.readframes(rf.getnframes())
-            with wave.open(str(full_path), "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(TARGET_SAMPLE_RATE)
-                wf.writeframes(old_frames + pcm16)
+        with open(_RECORDINGS_DIR / f"{safe}_full_lecture.pcm16", "ab") as full:
+            full.write(pcm16)
 
         return str(seg_path)
     except Exception:
@@ -138,9 +132,12 @@ async def _process_utterance(
     rooms: RoomRegistry = app_state.live_rooms
     started = time.perf_counter()
 
-    # Luôn lưu file WAV ghi âm thực tế của từng phân đoạn lớp học trước khi lọc
-    raw_seg_idx = rooms.room(scope).seq + 1
-    wav_path = await asyncio.to_thread(_save_utterance_wav, scope, raw_seg_idx, audio)
+    # Chỉ lưu file WAV khi bật STT_SAVE_AUDIO=1 (tránh tốn đĩa & đảm bảo riêng tư)
+    wav_path = (
+        await asyncio.to_thread(_save_utterance_wav, scope, audio)
+        if _save_audio_enabled()
+        else None
+    )
 
     forced_lang = None if language == "auto" else language
     result = await asyncio.to_thread(engine.transcribe, audio, forced_lang)

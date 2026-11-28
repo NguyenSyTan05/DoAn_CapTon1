@@ -144,7 +144,7 @@ def _record_audit_event(
 
 @login_bp.route("/login", methods=["POST"])
 def login():
-    if request_limit_exceeded(("login", request.remote_addr), 10, 900):
+    if request_limit_exceeded(("login", request.remote_addr), 25, 900):
         return jsonify({"message": "Too many login attempts. Please try again later."}), 429
 
     payload = request.get_json(silent=True)

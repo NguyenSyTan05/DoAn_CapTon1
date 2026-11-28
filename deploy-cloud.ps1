@@ -76,11 +76,14 @@ Write-Host "================================================================" -F
 
 $env:ALLOW_LAN_ORIGINS = "1"
 $env:AI_ALLOW_LAN_ORIGINS = "1"
+$env:TRUST_PROXY = "1"
 
 $flaskOut = Join-Path $BackendDir "flask-runtime.out.log"
 $flaskErr = Join-Path $BackendDir "flask-runtime.err.log"
-Start-Process -FilePath $BackendPythonExe -ArgumentList "app.py" -WorkingDirectory $BackendDir -WindowStyle Hidden -RedirectStandardOutput $flaskOut -RedirectStandardError $flaskErr
-Write-Host "[1/3] Started Flask Backend (:5000)" -ForegroundColor Green
+& $BackendPythonExe -c "import waitress" 2>$null
+$flaskEntry = if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $BackendDir "serve.py"))) { "serve.py" } else { "app.py" }
+Start-Process -FilePath $BackendPythonExe -ArgumentList $flaskEntry -WorkingDirectory $BackendDir -WindowStyle Hidden -RedirectStandardOutput $flaskOut -RedirectStandardError $flaskErr
+Write-Host "[1/3] Started Flask Backend (:5000 via $flaskEntry)" -ForegroundColor Green
 
 $aiOut = Join-Path $AiDir "ai-runtime.out.log"
 $aiErr = Join-Path $AiDir "ai-runtime.err.log"

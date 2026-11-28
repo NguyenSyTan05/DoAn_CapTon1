@@ -62,6 +62,14 @@ EN_HOTWORDS = (
 )
 
 
+# Ngưỡng avg_logprob tối thiểu để giữ một đoạn. -0.78 quá gắt với giọng có accent / phòng ồn nên mặc định -1.0.
+def _min_logprob() -> float:
+    try:
+        return float(os.getenv("STT_MIN_LOGPROB", "-1.0"))
+    except ValueError:
+        return -1.0
+
+
 def _keep_segment(s, max_no_speech: float = 0.85) -> bool:
     if not (getattr(s, "text", "") or "").strip():
         return False
@@ -72,8 +80,8 @@ def _keep_segment(s, max_no_speech: float = 0.85) -> bool:
         return False
     if cr > 2.4:
         return False  # chuỗi lặp (temperature=0 không có fallback)
-    if lp < -0.78:
-        return False  # chặn dứt điểm tiếng xì xào nền / tạp âm phòng họp có độ tự tin thấp (lp ~ -0.85..-1.50)
+    if lp < _min_logprob():
+        return False  # tiếng xì xào nền / tạp âm phòng họp có độ tự tin rất thấp
     if nsp >= 0.60 and lp < -0.55:
         return False  # vừa nghi không có tiếng nói vừa logprob thấp
     return True
@@ -208,7 +216,8 @@ class WhisperEngine:
         if has_local_turbo:
             return str(local_turbo)
 
-        for hf_repo in (
+        hf_override = os.getenv("WHISPER_HF_REPO", "").strip()
+        for hf_repo in ((hf_override,) if hf_override else ()) + (
             "deepdml/faster-whisper-large-v3-turbo-ct2",
             "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
             "Systran/faster-whisper-small",
@@ -226,7 +235,7 @@ class WhisperEngine:
         ])
         if local_fallback:
             return local_fallback
-        return "deepdml/faster-whisper-large-v3-turbo-ct2"
+        return hf_override or "deepdml/faster-whisper-large-v3-turbo-ct2"
 
     def _resolve_en_source(self) -> str | None:
         # Khi model chính đã là Large-v3-Turbo thì dùng chung luôn cho cả tiếng Anh (809M chuẩn hơn hẳn model_en_ct2 74M)
@@ -365,7 +374,7 @@ class WhisperEngine:
             initial_prompt=VI_INITIAL_PROMPT if lang == "vi" else None,
             hotwords=VI_HOTWORDS if lang == "vi" else (EN_HOTWORDS if lang == "en" else None),
             compression_ratio_threshold=2.4,
-            log_prob_threshold=-0.78,
+            log_prob_threshold=_min_logprob(),
             no_speech_threshold=0.85,
             vad_filter=True,
             vad_parameters=vad_opts,

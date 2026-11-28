@@ -90,6 +90,11 @@ app.include_router(rag_chatbot_router)
 app.include_router(translate_router)
 
 
+@app.get("/")
+async def gateway_root():
+    return {"service": "ClassBridge Unified Gateway", "status": "ok"}
+
+
 @app.get("/healthz")
 async def health():
     return {"status": "ok"}
@@ -135,6 +140,14 @@ async def _forward_to_flask(target_path: str, request: Request) -> Response:
         for k, v in request.headers.items()
         if k.lower() not in _HOP_BY_HOP_HEADERS and not k.lower().startswith("origin")
     }
+    client_host = (
+        request.headers.get("cf-connecting-ip")
+        or (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        or (request.client.host if request.client else "")
+    )
+    if client_host:
+        fwd_headers["X-Forwarded-For"] = client_host
+        fwd_headers["X-Real-IP"] = client_host
     body = await request.body()
 
     async with httpx.AsyncClient(timeout=30.0) as client:

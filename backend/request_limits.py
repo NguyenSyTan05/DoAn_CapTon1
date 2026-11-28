@@ -40,12 +40,39 @@ def _maybe_evict(now: float) -> None:
         logger.debug("request_limits: evicted %d idle buckets", len(stale))
 
 
+def client_ip() -> str:
+    """Return real client IP behind Cloudflare Tunnel / reverse proxy."""
+    try:
+        from flask import has_request_context, request
+
+        if not has_request_context():
+            return "unknown"
+        cf_ip = (request.headers.get("CF-Connecting-IP") or "").strip()
+        if cf_ip:
+            return cf_ip
+        xff = (request.headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
+        return request.remote_addr or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def request_limit_exceeded(bucket: object, limit: int, window_seconds: float) -> bool:
     """Return True if `bucket` has already hit `limit` events in the last `window_seconds`.
 
-    Thread-safe, process-local. For multi-process (Gunicorn) deployments replace
-    with flask-limiter backed by Redis.
+    Thread-safe, process-local. When running behind a local reverse proxy, replaces
+    loopback remote_addr in `(action, ip)` buckets with the forwarded client IP.
     """
+    if (
+        isinstance(bucket, tuple)
+        and len(bucket) == 2
+        and bucket[1] in (None, "", "127.0.0.1", "::1")
+    ):
+        bucket = (bucket[0], client_ip())
+
     now = time.monotonic()
     cutoff = now - window_seconds
 

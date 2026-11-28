@@ -71,6 +71,12 @@ class Config:
     # A13: Validated at class-definition time — missing value raises immediately.
     SQLALCHEMY_DATABASE_URI: str = _require_database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
+    SQLALCHEMY_ENGINE_OPTIONS: dict = {
+        "pool_pre_ping": True,
+        "pool_recycle": 240,
+        "pool_size": 10,
+        "max_overflow": 10,
+    }
 
     SECRET_KEY: str = _require_secret_key()
 

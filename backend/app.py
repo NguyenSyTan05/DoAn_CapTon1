@@ -70,6 +70,14 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.config["MAX_CONTENT_LENGTH"] = 21 * 1024 * 1024
 
+# Khi đứng sau Cloudflare Tunnel / FastAPI gateway proxy (TRUST_PROXY=1),
+# đọc IP thật của người dùng từ X-Forwarded-For thay vì 127.0.0.1.
+if os.getenv("TRUST_PROXY", "1") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=0)
+app.config["MAX_CONTENT_LENGTH"] = 21 * 1024 * 1024
+
 # Initialize extensions
 db.init_app(app)
 JWTManager(app)
